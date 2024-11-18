@@ -72,7 +72,8 @@ subroutine wrtnc2_unstructured(n,terr,sgh,sgh30,landm_coslat,lon,lat,area,output
     !  Create NetCDF file for output
     !
     print *,"Create NetCDF file for output"
-    status = nf_create (fout, NF_64BIT_DATA, foutid)
+    status = nf_create (fout, NF_NETCDF4, foutid)
+    write(*,*)"bmaa creating ",trim(fout),' ',status
     if (status .ne. NF_NOERR) call handle_err(status)
     !
     ! Create dimensions for output
@@ -473,6 +474,7 @@ subroutine wrtnc2_unstructured(n,terr,sgh,sgh30,landm_coslat,lon,lat,area,output
     print*,"done writing lon data"
     
     if (Lfind_ridges) then 
+      write(*,*)"bmaa ",__FILE__,__LINE
       print*,"writing MXDIS data",MINVAL(mxdis_target),MAXVAL(mxdis_target)
       status = nf_put_var_double (foutid, mxdisid, mxdis_target )
       if (status .ne. NF_NOERR) call handle_err(status)

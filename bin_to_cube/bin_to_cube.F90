@@ -184,6 +184,7 @@ program convterr
   vol = 0.0
   dx = (lon(2)-lon(1))
   dx_rad = dx*deg2rad
+  area_latlon= 0.d0
   do j=1,jm
     do i=1,im
       darea_latlon = dx_rad*(SIN(deg2rad*(-90.0+dx*j))-SIN(deg2rad*(-90.0+dx*(j-1))))

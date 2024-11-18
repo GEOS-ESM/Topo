@@ -42,7 +42,9 @@ MODULE shared_vars
       integer, parameter :: s = 5
       character :: c(0:s-1) = (/ achar(127), "/", "|", "/","-" /)
       character, parameter :: CR = achar(13)
-      write( *, "((a1,a, t4,i10, f10.2,' percent  done ', a1, '  '))", advance = "NO") CR, txt, n, x, c(mod(n, s))
+      !write( *, "((a1,a, t4,i10, f10.2,' percent  done ', a1, '  '))", advance = "NO") CR, txt, n, x, c(mod(n, s))
+      write( 6, "((a1,a, t4,i10, f10.2,' percent  done ', a1, '  '))", advance = "NO") CR, txt, n, x, c(mod(n, s))
+      flush(6)
     end subroutine progress_bar
   
     

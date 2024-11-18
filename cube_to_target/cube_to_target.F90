@@ -123,6 +123,7 @@ program convterr
 
 
   type(option_s):: opts(24)
+  character :: getopt_return
   !               
   !                     long name                   has     | short | specified    | required
   !                                                 argument| name  | command line | argument
@@ -151,7 +152,8 @@ program convterr
   opts(22) = option_s( "smooth_phis_numcycle"      ,.true.    , 'l'   ,.false.       ,.false.)
   opts(23) = option_s( "smoothing_over_ocean"      ,.false.   , 'm'   ,.false.       ,.false.)
   opts(24) = option_s( "jmax_segments"             ,.true.    , 'j'   ,.false.       ,.false.)
-  
+ 
+  write(*,*)'bmaa hello' 
   ! END longopts
   ! If no options were committed
   if (command_argument_count() .eq. 0 ) call print_help
@@ -164,7 +166,8 @@ program convterr
   
   ! Process options one by one
   do
-    select case( getopt( "c:f:g:hi:o:prxy:vz1:t:du:n:q:a:sbl:mj:", opts ) ) ! opts is optional (for longopts only)
+    getopt_return = getopt( "c:f:g:hi:o:prxy:vz1:t:du:n:q:a:sbl:mj:", opts )
+    select case(getopt_return)
     case( char(0) )
       exit
     case( 'c' )
@@ -332,6 +335,7 @@ program convterr
   write(*,*) "grid_descriptor_fname           = ",trim(grid_descriptor_fname)
   write(*,*) "intermediate_cubed_sphere_fname = ",trim(intermediate_cubed_sphere_fname)
   write(*,*) "output_grid                     = ",trim(output_grid)
+  write(*,*) "output_dir                      = ",trim(str_dir)
   write(*,*) "luse_prefilter                  = ",luse_prefilter
   write(*,*) "lfind_ridges                    = ",lfind_ridges
   write(*,*) "rrfac_max                       = ",rrfac_max
@@ -1233,7 +1237,8 @@ program convterr
     !  Create NetCDF file for output
     !
     print *,"Create NetCDF file for output"
-    status = nf_create (trim(output_fname), NF_64BIT_DATA, foutid)
+    !status = nf_create (trim(output_fname), NF_64BIT_DATA, foutid)
+    status = nf_create (trim(output_fname), NF_NETCDF4, foutid)
     if (status .ne. NF_NOERR) call handle_err(status)
     !
     ! Create dimensions for output
@@ -1618,6 +1623,7 @@ program convterr
     print*,"done writing lon data"
     
     if (Lfind_ridges) then 
+      write(*,*)"bmaa ",__FILE__,__LINE__
       print*,"writing MXDIS data",MINVAL(mxdis_target),MAXVAL(mxdis_target)
       status = nf_put_var_double (foutid, mxdisid, mxdis_target )
       if (status .ne. NF_NOERR) call handle_err(status)
@@ -1710,10 +1716,12 @@ program convterr
     !  Create NetCDF file for output
     !
     print *,"Opening ",trim(output_fname)
-    status = nf_open (trim(output_fname), nf_write, foutid)
+    !status = nf_open (trim(output_fname), nf_write, foutid)
+    status = nf_create(trim(output_fname), NF_NETCDF4, foutid)
+    write(*,*)'bmaa creat stat ',status
     if (status .ne. NF_NOERR) call handle_err(status)
 
-    status = nf_redef(foutid)
+    !status = nf_redef(foutid)
     if (status .ne. NF_NOERR) call handle_err(status)
     !
     ! Create dimensions for output
@@ -1766,6 +1774,7 @@ program convterr
     ! End define mode for output file
     !
     status = nf_enddef (foutid)
+    call handle_err(1) !bmaa
     if (status .ne. NF_NOERR) call handle_err(status)
     !
     ! Write variable for output
@@ -2003,7 +2012,9 @@ program convterr
     !  Create NetCDF file for output
     !
     print *,"Create NetCDF file for output"
-    status = nf_create (fout, NF_64BIT_DATA, foutid)
+    !status = nf_create (fout, NF_64BIT_DATA, foutid)
+    status = nf_create (fout, NF_NETCDF4, foutid)
+    write(*,*)'bmaa creating file ',trim(fout),' ',status
     if (status .ne. NF_NOERR) call handle_err(status)
     !
     ! Create dimensions for output
@@ -2250,6 +2261,7 @@ program convterr
     
     if (Lfind_ridges) then 
       
+      write(*,*)"bmaa ",__FILE__,__LINE__
       print*,"writing MXDIS  data",MINVAL(mxdis_target),MAXVAL(mxdis_target)
       status = nf_put_var_double (foutid, mxdisid, mxdis_target)
       if (status .ne. NF_NOERR) call handle_err(status)
