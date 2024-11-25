@@ -525,6 +525,7 @@ subroutine read_target_grid(grid_descriptor_fname,lregional_refinement,ltarget_l
     ! allocate target_rrfac anyway since it may be invoked
     ! if rrfac write is requested
     allocate ( target_rrfac(ntarget),stat=alloc_error)
+    target_rrfac = 1.0
   else
     lregional_refinement = .true.
     allocate ( target_rrfac(ntarget),stat=alloc_error)
