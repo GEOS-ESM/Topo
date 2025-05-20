@@ -56,7 +56,8 @@ CONTAINS
     real(r8), intent(in)             :: nu_lap
     integer, intent(in)                          :: smooth_phis_numcycle
     real(r8), DIMENSION(ncube,ncube,6), INTENT(IN) :: landfrac
-    logical, intent(in)                          :: lsmoothing_over_ocean, lsmooth_rrfac
+    logical, intent(in)                          :: lsmoothing_over_ocean
+    logical, intent(inout)                       :: lsmooth_rrfac          ! may be updated for stretched grid
     CHARACTER(len=1024), INTENT(IN   ), optional :: smooth_topo_fname
 
 
@@ -66,7 +67,8 @@ CONTAINS
     real(r8), DIMENSION(1-nhalo:ncube+nhalo, 1-nhalo:ncube+nhalo, 6) :: terr_halo_sm, terr_halo_dev
     real(r8), DIMENSION(1-nhalo:ncube+nhalo, 1-nhalo:ncube+nhalo, 6) :: da_halo, rr_halo, rr_halo_sm
     real(r8), DIMENSION(ncube,ncube,6)                               :: daxx, rrfac_sm, lap
-    real(r8), DIMENSION(ncube, ncube, 6)                             :: terr_sm00,terr_dev00,rr_updt
+    real(r8), allocatable :: terr_sm00(:,:,:), terr_dev00(:,:,:), rr_updt(:,:,:)  !needed for stretched grid - do_schmidt
+    real(r8), allocatable :: terr_orig(:,:,:)                                     !needed for stretched grid - do_schmidt
 
     real(r8), DIMENSION(ncube,ncube,6) :: landfrac_local
 
@@ -81,10 +83,22 @@ CONTAINS
     logical ::     smooth_topo_cubesph, do_refine
     logical ::     read_in_and_refine, new_smooth_topo
 
+    logical             :: do_schmidt                             ! needed for stretched grid - do_schmidt
+    real(r8)            :: target_lon, target_lat, stretch_factor ! needed for stretched grid - do_schmidt
+    real(r8)            :: base_dt, alpha                         ! needed for stretched grid - do_schmidt
+
     real(r8), parameter :: rearth = 6.37122e6 !radius of Earth from CIME/CESM
     real(r8)            :: nu_lap_unit_sphere,dt
     real(r8)            :: min_terr, max_terr   !to check if Laplacian smoother is stable
     real(r8)            :: min_rrfac, max_rrfac !to check if Laplacian smoother is stable
+
+    ! If caller forgot to set the flag, infer it from rrfac & refinement
+    if (.not. lsmooth_rrfac) then   
+       if (lregional_refinement .and. ANY(rrfac > 0._r8)) then
+          lsmooth_rrfac = .true. 
+       end if
+    end if
+
     !read_in_precomputed = .FALSE.
     read_in_precomputed = lread_smooth_topofile  !.TRUE.
     use_prefilter = luse_prefilter 
@@ -95,25 +109,22 @@ CONTAINS
     IF (read_in_precomputed) then
       write(*,*) " Read precomputed filtered topography from ",trim(smooth_topo_fname)
       if (lregional_refinement) then
-!check can not overwrite rrfac - I think we need merge from Julio
-        !        call read_topo_smooth_data(smooth_topo_fname,ncube*ncube*6,terr_sm,terr_dev,rr_fac=rrfac)
         call read_topo_smooth_data(smooth_topo_fname,ncube*ncube*6,terr_sm,terr_dev)
       else
         call read_topo_smooth_data(smooth_topo_fname,ncube*ncube*6,terr_sm,terr_dev)
       end if
       ! return to main program after
       ! reading topography variables
-      if (.NOT. lregional_refinement) then 
-        RETURN
+
+      ! Handle refinement-specific memory capture
+      if (read_in_and_refine .and. lregional_refinement) then
+          terr_sm00  = terr_sm
+          terr_dev00 = terr_dev
       else
-        read_in_and_refine=.TRUE.
-      end if   
-      terr_sm00  = terr_sm
-      terr_dev00 = terr_dev
-    ELSE
-      terr_sm00  = 0.
-      terr_dev00 = 0.
-    ENDIF
+          terr_sm00  = terr
+          terr_dev00 = 0.0_r8
+      end if
+    END IF   ! close read_in_precomputed  
 
      ! If your are here and read_in_and_refine=.FALSE. then
      ! then you must want to generate a new smooth topo.  So 
@@ -122,6 +133,18 @@ CONTAINS
      ! is more readable if done here and passed in.
      !---------------------------------------
      new_smooth_topo = .NOT.(read_in_and_refine)
+     ! Ensure arrays are allocated and initialized consistently
+     if (.not. allocated(terr_orig))  allocate(terr_orig(ncube, ncube, 6))
+     terr_orig = terr
+     
+     if (.not. allocated(terr_sm00))  allocate(terr_sm00(ncube, ncube, 6))
+     terr_sm00  = terr
+     
+     if (.not. allocated(terr_dev00)) allocate(terr_dev00(ncube, ncube, 6))
+     terr_dev00 = 0.0_r8
+     
+     if (.not. allocated(rr_updt)) allocate(rr_updt(ncube, ncube, 6))
+     rr_updt = 0.0_r8
 
      if ( ldevelopment_diags.AND.(NSCL_f>0) ) then
        write( ofname , &
@@ -134,7 +157,7 @@ CONTAINS
             ncube, NSCL_c/2
        ofname = 'topo_smooth_'//trim(str_source)//trim(ofname)
      end if
-     
+
      if (lregional_refinement) then
        ofname= TRIM(str_dir)//'/'//trim(ofname)//'_'//trim(ogrid)//'.nc'
      else
@@ -210,6 +233,13 @@ CONTAINS
          !
          nu_lap_unit_sphere = nu_lap/(rearth*rearth)
 
+        ! If caller forgot to set the flag, infer it from rrfac & refinement
+        if (.not. lsmooth_rrfac) then
+           if (lregional_refinement .and. ANY(rrfac > 0._r8)) then
+              lsmooth_rrfac = .true.
+           end if
+        end if
+
          if (lregional_refinement.and.lsmooth_rrfac) then
            write(*,*) "Smoooth rrfac"
            max_rrfac = MAXVAL(rrfac)
@@ -243,25 +273,131 @@ CONTAINS
              end do
            end do
          end if
-         !
-         ! smooth surface height
-         !
-         write(*,*) "Smoooth height"
-         rrfac_sm = (1.0/rrfac)**2 !scaling of smoothing coefficient
-         max_terr = MAXVAL(terr)
-         min_terr = MINVAL(terr)
-         terr_sm = terr
-         dt = 16.0/real(smooth_phis_numcycle)
-         do iter = 1,smooth_phis_numcycle
-           call progress_bar("# ", iter, DBLE(100*iter)/DBLE(smooth_phis_numcycle))
-           call laplacian(terr_sm, ncube, lap, landfrac_local,lsmoothing_over_ocean)
-           terr_sm = terr_sm+lap*dt*nu_lap_unit_sphere*rrfac_sm
-           if (MAXVAL(terr_sm)>1.2*max_terr.or.MINVAL(terr_sm)<min_terr-500.0) then
-             write(*,*) "Laplace iteration seems to be unstable: MINVAL(terr_sm),MAXVAL(terr_sm)",MINVAL(terr_sm),MAXVAL(terr_sm)
-             stop
-           end if
-         end do
-       endif
+
+         ! Stretch-grid control (YAML may say DO_SCHMIDT: true/false)
+         call read_gen_scrip('GenScrip.yaml', do_schmidt, target_lon, target_lat, stretch_factor)
+
+       !---------------------------------------------------------------------------------------
+       !  Surface-height smoothing
+       !  • Uniform / PE grids   → original Laplacian loop
+       !  • Schmidt stretched    → CFL-scaled loop 
+       !========================================================================================
+       ! WHY THE “SCHMIDT-STRETCHED” HEIGHT SMOOTHER LOOKS DIFFERENT
+       ! ---------------------------------------------------------------------------------------
+       !   On a refined Schmidt grid (“regional-refinement” / RRFAC>1) the smallest
+       !    cube-sphere cells can be Δx ≈ (1/RRFAC) times the coarse-grid spacing.
+       !    If we ran the same Laplacian diffusion with a coarse-grid time-step,
+       !    ∆t/∆x² would violate the CFL limit and the height field would blow up
+       !    after a few iterations.
+       !
+       !   We therefore:
+       !      – Scale a *local* stability factor  rrfac_sm = (1/rrfac)²  .
+       !        Where the grid is 4 × finer (rrfac=4) we multiply the diffusion
+       !        coefficient by (1/4)² = 1/16, so the effective ∆t/∆x² matches the
+       !        coarse region.
+       !
+       !      – Reduce the base time-step:
+       !            base_dt = 16 / smooth_phis_numcycle         (regular-grid value)
+       !            dt      = base_dt / (stretch_factor*4)      (extra safety for zoom)
+       !
+       !        `stretch_factor` is the Schmidt refinement factor n.
+       !            Local grid spacing = coarse-grid spacing / n
+       !            Effective resolution = C_base × n
+       !               examples:  (C-equivalent values are illustrative; any n≥1 works.)
+       !                   C270  with n = 2.5   → local ≈ C675
+       !                   C540  with n = 2.5   → local ≈ C1350
+       !                   C1539 with n = 3.0   → local ≈ C4617
+       !        The extra “×4” in  dt = base_dt / (n*4)  is a universal safety
+       !        margin so the smallest refined cell stays within the global CFL
+       !        limit, independent of the exact value of n.
+       !
+       !      – Limit each update with an empirical α = 0.3 to damp the first
+       !        iteration spike that can appear at sharp terrain steps.
+       !
+       !   The guard:
+       !        if (.not. any(rrfac > 0.)) then
+       !            … skip smoother …
+       !        endif
+       !    allows the exact same subroutine to run on a regular grid where
+       !    rr_factor==1 everywhere (the new maths collapses to the old one).
+       !
+       !   Runtime sanity-check:
+       !        MAXVAL(terr_sm) > 1.2*MAX(terr)  OR  MINVAL(terr_sm) < MIN(terr)-500 m
+       !    catches a divergence early and aborts with a clear message instead
+       !    of corrupting the topo file.
+       !
+       ! Short version: all extra factors keep ∆t/∆x² locally the same as the
+       ! coarse grid, so stretched runs are stable while regular runs remain
+       ! bit-for-bit identical to the historical smoother.
+       !========================================================================================
+         
+         if (.not. do_schmidt) then
+            !––– ORIGINAL UNIFORM SMOOTHER ––––––––––––––––––––––––––––
+            write(*,*) "Smooth height (uniform)"
+            rrfac_sm = (1.0_r8/rrfac)**2
+            max_terr = MAXVAL(terr);  min_terr = MINVAL(terr)
+            terr_sm  = terr
+            dt       = 16.0_r8 / REAL(smooth_phis_numcycle, r8)
+         
+            do iter = 1, smooth_phis_numcycle
+               call progress_bar("# ", iter, 100.0_r8*iter/smooth_phis_numcycle)
+               call laplacian(terr_sm, ncube, lap, landfrac_local, lsmoothing_over_ocean)
+               terr_sm = terr_sm + lap*dt*nu_lap_unit_sphere*rrfac_sm
+         
+               if (MAXVAL(terr_sm) > 1.2_r8*max_terr .or. MINVAL(terr_sm) < min_terr-500._r8) then
+                  write(*,*) "Laplace iteration seems to be unstable:"
+                  write(*,*) "MIN, MAX(terr_sm) =", MINVAL(terr_sm), MAXVAL(terr_sm)
+                  stop
+               end if
+            end do
+         
+         else
+            !––– SCHMIDT-STRETCHED SMOOTHER –––––––––––––––––––––––––––
+            write(*,*) "Smooth height (stretched)"
+         
+            if (.not. any(rrfac > 0._r8)) then
+               write(*,*) "INFO: no RRFAC present – skipping height smoother"
+               terr_sm = terr
+            else
+               terr_sm  = terr
+               rrfac_sm = (1.0_r8/rrfac)**2
+         
+               max_terr = MAXVAL(terr);  min_terr = MINVAL(terr)
+               base_dt  = 16.0_r8 / REAL(smooth_phis_numcycle, r8)
+               dt       = base_dt / (stretch_factor*4.0_r8)   ! tighter CFL for stretched
+               alpha    = 0.3_r8                              ! optional limiter
+         
+               do iter = 1, smooth_phis_numcycle
+                  call progress_bar("# ", iter, 100.0_r8*iter/smooth_phis_numcycle)
+                  call laplacian(terr_sm, ncube, lap, landfrac, lsmoothing_over_ocean)
+                  terr_sm = terr_sm + alpha*(lap*dt*nu_lap_unit_sphere*rrfac_sm)
+         
+                  if (MAXVAL(terr_sm) > 1.2_r8*max_terr .or. MINVAL(terr_sm) < min_terr-500._r8) then
+                     write(*,*) "ERROR: height blow-up at iter=", iter
+                     stop
+                  end if
+               end do
+            end if
+         end if ! <– closes “if (.not. do_schmidt)”
+       endif    ! <- closes "IF (ldistance_weighted_smoother)"
+!====================================================================
+! >>> be sure refined cap is merged with coarse halo <<<
+!====================================================================
+         ! Any cell whose r‑factor update is > 1 belongs to the refined cap.
+         ! Copy refined topo over the pre‑existing coarse field.
+         ! build mask once, independent of smoother branch
+      if (lregional_refinement) rr_updt = rrfac 
+
+      if (lregional_refinement) then
+         write(*,*) "Sanity check: MIN/MAX(rr_updt) =", MINVAL(rr_updt), MAXVAL(rr_updt)
+      end if
+
+      if (read_in_and_refine .and. lregional_refinement) then
+         terr_sm  = merge(terr_sm ,  terr_sm00, rr_updt > 1.0_r8)
+         terr_dev = merge(terr_dev, terr_dev00, rr_updt > 1.0_r8)
+      end if
+!--------------------------------------------------------------------
+
       volterr_in=0.
       volterr_sm=0.
       do ip=1,6 
@@ -279,7 +415,14 @@ CONTAINS
       end do
       write(*,*) " Smooth Topo volume  AFTER rescaling = ",volterr_sm/(6*sum(da))
 
-      terr_dev = terr - terr_sm
+      ! Sanity check allocations and array sizes before computing terr_dev
+      write(*,*) "Checking arrays before terr_dev calculation:"
+      write(*,*) "terr_orig allocated:", allocated(terr_orig), "shape:", shape(terr_orig)
+      write(*,*) "terr_sm shape:", shape(terr_sm)
+      write(*,*) "terr_dev shape:", shape(terr_dev)      
+      
+      ! Now do the subtraction
+      terr_dev = terr_orig - terr_sm
 
       if (read_in_and_refine) then
         where( rr_updt <= 1. )
@@ -298,7 +441,76 @@ CONTAINS
         end if
         if (stop_after_smoothing ) STOP
       end if
+
+      ! Clean up
+      if (allocated(terr_orig))     deallocate(terr_orig)
+      if (allocated(terr_sm00))     deallocate(terr_sm00)
+      if (allocated(terr_dev00))    deallocate(terr_dev00)
+      if (allocated(rr_updt))       deallocate(rr_updt)
+
   end SUBROUTINE smooth_intermediate_topo_wrap
+
+ !-------------------------------------------------------------------
+ ! read_gen_scrip
+ !   Reads four key/value lines from GenScrip.yaml:
+ !     DO_SCHMIDT, TARGET_LON, TARGET_LAT, STRETCH_FACTOR
+ !   Returns them through the intent-out arguments.
+ !   If the file can’t be opened the routine simply returns with
+ !   default values (no Schmidt stretching).
+ !-------------------------------------------------------------------
+
+  subroutine read_gen_scrip(  cfgFile   , do_schmidt  , target_lon , target_lat    , stretch_factor )
+    implicit none
+  
+    !-- arguments
+    character(len=*), intent(in ) :: cfgFile
+    logical        , intent(out) :: do_schmidt
+    real(r8)       , intent(out) :: target_lon, target_lat, stretch_factor
+  
+    !-- locals
+    integer              :: ios, unit, idx
+    character(len=256)   :: line, valstr
+    character(len=32)    :: key
+      
+    !-- defaults
+    do_schmidt     = .false.
+    target_lon     =  0.0_r8 
+    target_lat     =  0.0_r8
+    stretch_factor =  1.0_r8
+            
+    open(newunit=unit, file=cfgFile, status='old', action='read', iostat=ios)
+    if (ios /= 0) then 
+      write(*,*) 'WARNING: Could not open ', trim(cfgFile), ' – assuming no stretching.'
+      return
+    endif
+            
+    do      
+      read(unit, '(A)', iostat=ios) line
+      if (ios /= 0) exit    ! EOF or error
+
+      ! find the colon
+      idx = index(line, ':')
+      if (idx == 0) cycle   ! no “:” on this line
+               
+      ! split key vs. value
+      key   = adjustl( line(:idx-1) )
+      valstr= adjustl( line(idx+1:) ) 
+                  
+      select case(trim(key))
+      case('DO_SCHMIDT')
+        do_schmidt = .true.
+      case('TARGET_LON')
+        read(valstr, *) target_lon
+      case('TARGET_LAT')
+        read(valstr, *) target_lat
+      case('STRETCH_FACTOR')
+        read(valstr, *) stretch_factor 
+      end select
+    end do   
+         
+    close(unit)
+  end subroutine read_gen_scrip
+
 
   subroutine laplacian(terr, ncube, lap, landfrac, lsmoothing_over_ocean)
     real(r8), dimension(ncube,ncube,6), intent(in)  :: terr

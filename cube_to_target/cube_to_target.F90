@@ -8,14 +8,337 @@
 !          Adam Herrington, AMP/CGD/NCAR
 !
 ! ex: ./cube_to_target --help to get list of long and short option names.
+
+MODULE overlap_mod
+  USE shr_kind_mod, ONLY: r8 => shr_kind_r8
+  USE remap
+  USE shared_vars, ONLY: progress_bar
+  IMPLICIT NONE
+CONTAINS
+
+  !*******************************************************************************
+  !  At this point mapping arrays are calculated
+  !
+  !      weights_lgr_index_all: dimension(JALL). Index of target grid cell that contains
+  !                             current exchange grid cell
+  ! 
+  !      weights_eul_index_all: dimension(JALL,3). 3 indices of cubed-sphere grid cell that 
+  !                             contains current exchange grid cell:
+  !
+  !                                weights_eul_index_all(:,1) = x-index
+  !                                weights_eul_index_all(:,2) = y-index
+  !                                weights_eul_index_all(:,3) = panel/face number 1-6
+  !
+  !                             These are then converted to one-dimensional indices 
+  !                             for cubed sphere variables terr(n), ... etc. 
+  !
+  !      weights_all:           dimension(JALL,nreconstrunction). Spherical area of
+  !                             exchange grid cell (steradians)
+  !
+  !********************************************************************************
+
+  SUBROUTINE overlap_weights(weights_lgr_index_all,weights_eul_index_all,weights_all,&
+       jall,ncube,ngauss,ntarget,ncorner,jmax_segments,target_corner_lon,target_corner_lat,nreconstruction,ldbg)
+    use shr_kind_mod, only: r8 => shr_kind_r8,i8 => shr_kind_i8
+    use remap
+    use shared_vars, only: progress_bar
+    IMPLICIT NONE
+
+    !----------------------------------------------------------------------
+    !  Dummy arguments
+    !----------------------------------------------------------------------
+    INTEGER(i8),                    INTENT(INOUT) :: jall            ! # rows currently filled
+    INTEGER,                        INTENT(IN)    :: ncube, ngauss,  &
+                                                     ntarget,         &
+                                                     jmax_segments,   &
+                                                     ncorner,         &
+                                                     nreconstruction
+    ! Grow‑as‑you‑go exchange‑grid arrays (caller passed them in ALLOCATED)
+    REAL   (r8)  , ALLOCATABLE,     INTENT(INOUT) :: weights_all(:,:)           ! (rows , nreconstruction)
+    INTEGER      , ALLOCATABLE,     INTENT(INOUT) :: weights_eul_index_all(:,:) ! (rows , 3)
+    INTEGER      , ALLOCATABLE,     INTENT(INOUT) :: weights_lgr_index_all(:)   ! (rows)
+
+    REAL   (r8),                    INTENT(IN)    :: target_corner_lon(ncorner,ntarget)
+    REAL   (r8),                    INTENT(IN)    :: target_corner_lat(ncorner,ntarget)
+    LOGICAL,                        INTENT(IN)    :: ldbg
+    !----------------------------------------------------------------------
+    !  Local scalars / arrays
+    !----------------------------------------------------------------------
+    INTEGER,  DIMENSION(9*(ncorner+1)) :: ipanel_tmp, ipanel_array
+    REAL(r8), DIMENSION(ncorner)       :: lon, lat
+    REAL(r8), DIMENSION(0:ncube+2)     :: xgno, ygno
+    REAL(r8), DIMENSION(0:ncorner+1)   :: xcell, ycell
+    REAL(r8), DIMENSION(ngauss)        :: gauss_weights, abscissae
+
+    REAL(r8) :: da, tmp, alpha, beta, pi, piq, pih, rad2deg, deps
+    INTEGER  :: i, j, k, ip, ipanel, ii, jx, jy, jcollect, ncorner_this_cell
+    INTEGER  :: alloc_error, ilon, ilat, count
+    INTEGER(KIND=8)         :: jall_anticipated, jall_anticipated_8
+
+    ! Work arrays returned from compute_weights_cell
+    REAL   (r8)  , ALLOCATABLE :: weights(:,:)          ! (jmax_segments , nreconstruction)
+    INTEGER      , ALLOCATABLE :: weights_eul_index(:,:) ! (jmax_segments , 2)
+
+    pi = 4.D0*DATAN(1.D0)
+    piq = pi/4.D0
+    pih = pi*0.5D0
+    rad2deg = 180.D0/pi
+
+    deps = 10.0D0*pi/180.0_r8
+
+
+    jall_anticipated_8 = INT(ntarget, 8) * INT(jmax_segments, 8) * 3_8
+
+    IF (jall_anticipated_8 > HUGE(jall_anticipated)) THEN
+        WRITE(*,*) "WARNING: jall_anticipated exceeds INTEGER limit; truncating to 1080000000"
+        jall_anticipated = 1080000000
+    ELSE
+        jall_anticipated = jall_anticipated_8
+    END IF
+
+    ipanel_array = -99
+    !
+    da = pih/DBLE(ncube)
+    xgno(0) = -bignum
+    DO i=1,ncube+1
+      xgno(i) = TAN(-piq+(i-1)*da)
+    END DO
+    xgno(ncube+2) = bignum
+    ygno = xgno
+
+    CALL glwp(ngauss,gauss_weights,abscissae)
+
+    allocate (weights(jmax_segments,nreconstruction),stat=alloc_error )
+    allocate (weights_eul_index(jmax_segments,2),stat=alloc_error )
+
+    IF (alloc_error /= 0) THEN
+       WRITE(*,*) "ERROR: Allocation failed for weights arrays"
+       STOP
+    ENDIF
+
+
+    jall = 0
+
+
+    DO i=1,ntarget
+
+
+      !if (MOD(i,10)==0)call progress_bar("# ", i, DBLE(100*i)/DBLE(ntarget))  !commented out b/c log to large
+      !
+      !---------------------------------------------------          
+      !
+      ! determine how many vertices the cell has
+      !
+      !---------------------------------------------------
+      !
+      CALL remove_duplicates_latlon(ncorner,target_corner_lon(:,i),target_corner_lat(:,i),&
+           ncorner_this_cell,lon,lat,1.0E-10)
+
+      IF (ldbg) THEN
+        WRITE(*,*) "number of vertices ",ncorner_this_cell
+        WRITE(*,*) "vertices locations lon,",lon(1:ncorner_this_cell)*rad2deg
+        WRITE(*,*) "vertices locations lat,",lat(1:ncorner_this_cell)*rad2deg
+        DO j=1,ncorner_this_cell
+          WRITE(*,*) lon(j)*rad2deg, lat(j)*rad2deg
+        END DO
+        WRITE(*,*) "  "
+      END IF
+      !
+      !---------------------------------------------------
+      !
+      ! determine how many and which panels the cell spans
+      !
+      !---------------------------------------------------          
+      !
+#ifdef old    
+      DO j=1,ncorner_this_cell
+        CALL CubedSphereABPFromRLL(lon(j), lat(j), alpha, beta, ipanel_tmp(j), .TRUE.)
+        IF (ldbg) WRITE(*,*) "ipanel for corner ",j," is ",ipanel_tmp(j)
+      END DO
+      ipanel_tmp(ncorner_this_cell+1) = ipanel_tmp(1)
+      ! make sure to include possible overlap areas not on the face the vertices are located
+      IF (MINVAL(lat(1:ncorner_this_cell))<-pi/6.0) THEN
+        ! include South-pole panel in search
+        ipanel_tmp(ncorner_this_cell+1) = 5
+        IF (ldbg) WRITE(*,*)  "add panel 5 to search"
+      END IF
+      IF (MAXVAL(lat(1:ncorner_this_cell))>pi/6.0) THEN
+        ! include North-pole panel in search
+        ipanel_tmp(ncorner_this_cell+1) = 6
+        IF (ldbg) WRITE(*,*)  "add panel 6 to search"
+      END IF
+      CALL remove_duplicates_integer(ncorner_this_cell+1,ipanel_tmp(1:ncorner_this_cell+1),&
+           k,ipanel_array(1:ncorner_this_cell+1))
+#endif
+      !
+      ! make sure to include possible overlap areas not on the face the vertices are located
+      ! For example, a cell could be on panel 3 and 5 but have overlap area on panel 2
+      count = 0
+      do ilat=-1,1
+        do ilon=-1,1
+          DO j=1,ncorner_this_cell
+            count=count+1
+            CALL CubedSphereABPFromRLL(lon(j)+ilon*deps, lat(j)+ilat*deps, alpha, beta, ipanel_tmp(count), .TRUE.)
+          END DO
+        end do
+      end do
+
+      !
+      ! remove duplicates in ipanel_tmp
+      !
+      CALL remove_duplicates_integer(count,ipanel_tmp(1:count),&
+           k,ipanel_array(1:count))
+      !
+      !---------------------------------------------------
+      !
+      ! loop over panels with possible overlap areas
+      !
+      !---------------------------------------------------          
+      !
+      DO ip = 1,k
+        ipanel = ipanel_array(ip)
+        DO j=1,ncorner_this_cell
+          ii = ipanel
+          CALL CubedSphereABPFromRLL(lon(j), lat(j), alpha, beta, ii,.FALSE.)
+          IF (j==1) THEN
+            jx = CEILING((alpha + piq) / da)
+            jy = CEILING((beta  + piq) / da)
+          END IF
+          xcell(ncorner_this_cell+1-j) = TAN(alpha)
+          ycell(ncorner_this_cell+1-j) = TAN(beta)
+        END DO
+        xcell(0) = xcell(ncorner_this_cell)
+        ycell(0) = ycell(ncorner_this_cell)
+        xcell(ncorner_this_cell+1) = xcell(1)
+        ycell(ncorner_this_cell+1) = ycell(1)
+
+        jx = MAX(MIN(jx,ncube+1),0)
+        jy = MAX(MIN(jy,ncube+1),0)
+
+
+        CALL compute_weights_cell(xcell(0:ncorner_this_cell+1),ycell(0:ncorner_this_cell+1),&
+             jx,jy,nreconstruction,xgno,ygno,&
+             1, ncube+1, 1,ncube+1, tmp,&
+             ngauss,gauss_weights,abscissae,weights,weights_eul_index,jcollect,jmax_segments,&
+             ncube,0,ncorner_this_cell,ldbg,i)
+
+
+        IF (jcollect > jmax_segments) THEN
+          WRITE(*,*) "WARNING: jcollect > jmax_segments!", jcollect, jmax_segments
+        ENDIF
+
+        IF (jcollect <= 0) THEN
+          If (ldbg) WRITE(*,*) "WARNING: Skipping target", i, "with no overlap (jcollect = 0)"
+           CYCLE
+        ENDIF
+
+       IF (.NOT. ALLOCATED(weights_all) .OR. &
+           SIZE(weights_all,1) < jall + jcollect) THEN
+         CALL ensure_capacity(MAX(jcollect,1024), jall, nreconstruction, &
+                              weights_all, weights_eul_index_all, &
+                              weights_lgr_index_all)
+       END IF
+
+
+        weights_all(jall + 1 : jall + jcollect, :) = weights(1:jcollect,:)
+        weights_eul_index_all(jall + 1 : jall + jcollect, 1:2) = weights_eul_index(1:jcollect,:)
+        weights_eul_index_all(jall + 1 : jall + jcollect, 3) = ipanel
+        weights_lgr_index_all(jall + 1 : jall + jcollect) = i
+
+        jall = jall + jcollect
+
+      END DO
+    END DO
+
+    !====================================================================
+    !  ensure_capacity  – dynamically (re)allocates the three big weight
+    !  arrays so that at least  jall+extra‑1  rows are available.
+    !  Runs like res c5760 can't run without this
+    !  Handles the very first call where the arrays are unallocated.
+    ! Uses MOVE_ALLOC, so no manual DEALLOCATE is ever needed.
+    !====================================================================
+    CONTAINS
+
+    SUBROUTINE ensure_capacity(extra, jall, nreconstruction,             &
+                               weights_all, weights_eul_index_all,      &
+                               weights_lgr_index_all)
+      USE shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
+      IMPLICIT NONE
+    
+      ! Arguments
+      INTEGER(i8), INTENT(IN)    :: extra             
+      INTEGER(i8), INTENT(IN)    :: jall              
+      INTEGER, INTENT(IN)        :: nreconstruction   
+    
+      REAL(r8), ALLOCATABLE, INTENT(INOUT) :: weights_all(:,:)            
+      INTEGER , ALLOCATABLE, INTENT(INOUT) :: weights_eul_index_all(:,:)  
+      INTEGER , ALLOCATABLE, INTENT(INOUT) :: weights_lgr_index_all(:)    
+    
+      ! Local variables
+      INTEGER                    :: stat
+      INTEGER(i8)                :: newRows, oldRows, rowsToCopy
+    
+      REAL(r8), ALLOCATABLE      :: tmp_r(:,:)
+      INTEGER, ALLOCATABLE       :: tmp_i2(:,:), tmp_i1(:)
+    
+      ! Correct and consistent integer kind handling
+      IF (ALLOCATED(weights_all)) THEN
+        oldRows = SIZE(weights_all,1,KIND=i8)
+      ELSE
+        oldRows = 0_i8
+      END IF
+    
+      IF (ALLOCATED(weights_all)) THEN
+        newRows = MAX(oldRows*2_i8, jall + extra)
+      ELSE
+        newRows = MAX(1024_i8, jall + extra)
+      END IF
+    
+      ! Explicit print statement for debugging
+      WRITE(*,*) "ensure_capacity: oldRows=", oldRows, &
+                 " jall=", jall, " extra=", extra, " newRows=", newRows
+    
+      ! Resize weights_all safely
+      IF (ALLOCATED(weights_all)) CALL MOVE_ALLOC(weights_all, tmp_r)
+      ALLOCATE(weights_all(newRows, nreconstruction), STAT=stat)
+    
+      IF (jall > 0_i8 .AND. ALLOCATED(tmp_r)) THEN
+        rowsToCopy = MIN(jall, SIZE(tmp_r,1,KIND=i8))
+        weights_all(1:rowsToCopy,:) = tmp_r(1:rowsToCopy,:)
+      END IF
+    
+      ! Resize weights_eul_index_all safely
+      IF (ALLOCATED(weights_eul_index_all)) CALL MOVE_ALLOC(weights_eul_index_all, tmp_i2)
+      ALLOCATE(weights_eul_index_all(newRows, 3), STAT=stat)
+    
+      IF (jall > 0_i8 .AND. ALLOCATED(tmp_i2)) THEN
+        rowsToCopy = MIN(jall, SIZE(tmp_i2,1,KIND=i8))
+        weights_eul_index_all(1:rowsToCopy,:) = tmp_i2(1:rowsToCopy,:)
+      END IF
+    
+      ! Resize weights_lgr_index_all safely
+      IF (ALLOCATED(weights_lgr_index_all)) CALL MOVE_ALLOC(weights_lgr_index_all, tmp_i1)
+      ALLOCATE(weights_lgr_index_all(newRows), STAT=stat)
+    
+      IF (jall > 0_i8 .AND. ALLOCATED(tmp_i1)) THEN
+        rowsToCopy = MIN(jall, SIZE(tmp_i1,KIND=i8))
+        weights_lgr_index_all(1:rowsToCopy) = tmp_i1(1:rowsToCopy)
+      END IF
+    
+    END SUBROUTINE ensure_capacity
+
+  END SUBROUTINE overlap_weights
+
+END MODULE overlap_mod
 !
 program convterr
-  use shr_kind_mod, only: r8 => shr_kind_r8
+  use shr_kind_mod, only: r8 => shr_kind_r8,i8 => shr_kind_i8
   use smooth_topo_cube_sph
   use ridge_ana
   use shared_vars
   use reconstruct
   use f90getopt
+  USE overlap_mod
   
   implicit none
 #     include         <netcdf.inc>
@@ -29,7 +352,8 @@ program convterr
   logical :: ldbg=.false.
   real(r8):: wt
   integer :: ii,ip,jx,jy,jp,np,counti !counters,dimensions
-  integer :: jmax_segments=-1,jall,jall_anticipated !overlap segments
+  integer(kind=8) ::  jall_anticipated
+  integer(i8) :: jmax_segments = -1, jall
   integer, parameter :: ngauss = 3               !quadrature for line integrals
   
   integer                              :: ntarget, ncorner, nrank, nlon, nlat               !target grid dimensions
@@ -124,6 +448,9 @@ program convterr
 
   type(option_s):: opts(24)
   character :: getopt_return
+
+  integer :: seg_est
+  integer(kind=8) :: jall_anticipated_8
   !               
   !                     long name                   has     | short | specified    | required
   !                                                 argument| name  | command line | argument
@@ -156,7 +483,10 @@ program convterr
   write(*,*)'bmaa hello' 
   ! END longopts
   ! If no options were committed
-  if (command_argument_count() .eq. 0 ) call print_help
+  if (command_argument_count() == 0) then
+    call print_help
+    stop 0
+  endif
   !
   ! collect command line arguments in this string for netCDF meta data
   !
@@ -351,7 +681,7 @@ program convterr
   write(*,*) "jmax_segments                   = ",jmax_segments
 
   !*********************************************************
-  
+ 
   call  set_constants
   
   ! Read in target grid
@@ -359,6 +689,11 @@ program convterr
   if (.not.lstop_after_smoothing) then
     call read_target_grid(grid_descriptor_fname,lregional_refinement,ltarget_latlon,lpole,nlat,nlon,ntarget,ncorner,nrank,&
          target_corner_lon, target_corner_lat, target_center_lon, target_center_lat, target_area, target_rrfac)
+
+      ! after you decide lregional_refinement
+      if (lregional_refinement .and. .not. lwrite_rrfac_to_topo_file) then
+          lwrite_rrfac_to_topo_file = .TRUE.
+      end if
     if (.not.lregional_refinement.and.rrfac_max.ne.1) then
       write(*,*) "User has set rrfac_max =",rrfac_max
       write(*,*) "which turns on regional refinement, however, the refinementfactor is not on grid descriptor file"
@@ -548,11 +883,41 @@ program convterr
     endif
   end if
   
-  output_fname = TRIM(str_dir)//'/'//trim(output_grid)//'_'//trim(str_source)//trim(ofile)//'_'//date//'.nc'
+  !---------------------------------------------------------------
+  ! 1.  Ensure the output directory string is never blank.
+  !     (If the user omits --output_data_directory we default
+  !      to the current working directory.)
+  !---------------------------------------------------------------
+  IF (TRIM(str_dir) == '') str_dir = './'
+  
+  !---------------------------------------------------------------
+  ! 2.  Make sure the directory now exists.
+  !     ‘mkdir -p’ is harmless if it already exists.
+  !---------------------------------------------------------------
+  CALL system('mkdir -p ' // TRIM(str_dir))
+  
+  !---------------------------------------------------------------
+  ! 3.  Now build the complete NetCDF file name.
+  !---------------------------------------------------------------
+  output_fname = TRIM(str_dir)//'/'//TRIM(output_grid)//'_'//  &
+                 TRIM(str_source)//TRIM(ofile)//'_'//date//'.nc'
+  
+  !---------------------------------------------------------------
+  ! 4.  Final sanity check: if something is still wrong, fall back
+  !     to a simple name so NetCDF create never gets “.nc”.
+  !---------------------------------------------------------------
+  IF (TRIM(output_fname) == '.nc' .OR. TRIM(output_fname) == '') THEN
+     output_fname = TRIM(str_dir)//'/topography.nc'
+     WRITE(*,*) 'WARNING: output_fname blank; writing to ',  &
+                TRIM(output_fname)
+  END IF
+  !---------------------------------------------------------------
+
+
   write(*,*) "Writing topo file to ",output_fname
   !*********************************************************
   !
-  ! script for plotting
+  ! ncl script for plotting
   !
   !*********************************************************
   if (.not.lstop_after_smoothing) then
@@ -564,70 +929,75 @@ program convterr
   
   !+++ARH
   ! Compute overlap weights
-  !------------------------------------------------------------------------------------------------
-  
-  ! On entry to overlap_weights 'jall' is a generous guess at the number of cells in
-  ! in the 'exchange grid'
-  allocate( rrfac(ncube,ncube,6)  )
-  rrfac = 0.0
-  
-  if (.not.lstop_after_smoothing) then    
-    if (nrank == 1) then
-      da_min_ncube  = 4.0*pi/(6.0*DBLE(ncube*ncube))
-      da_min_target = MAXVAL(target_area)
-      if (da_min_target==0) then !bug with MPAS files
-        write(*,*) "ERROR: da_min_target =",da_min_target
-        stop
-      else
-        if (jmax_segments<0) then
-           write(*,*) "using dynamic estimate for jmax_segments " 
-           !++ jtb : Increased by 4x. Needed for c1440 FV3
-           !jmax_segments = 10 * ncorner*NINT(da_min_target/da_min_ncube)!phl - FAILS for MPAS ~3km
-           jmax_segments = 4 * ncorner*NINT(da_min_target/da_min_ncube)
-           jmax_segments = MIN( jmax_segments, 10000 )
-        else
-           write(*,*) "jmax_segments set by user = ",jmax_segments
-        end if
-      end if
-      write(*,*) "ncorner, da_min_target, da_min_ncube =", ncorner, da_min_target, da_min_ncube
-      write(*,*) "jmax_segments",jmax_segments,da_min_target,da_min_ncube
-    else
-      if (jmax_segments<0) then
-         jmax_segments = 100000   !can be tweaked
-      else
-         write(*,*) "jmax_segments set by user = ",jmax_segments
-      end if
-    end if
-    if (real(ntarget)*real(jmax_segments)>huge(real(jall_anticipated))) then
-      jall_anticipated = 1080000000 !huge(jmax_segments) !anticipated number of weights (can be tweaked)
-      write(*,*) "truncating jall_anticipated to ",jall_anticipated
-    else
-      jall_anticipated = ntarget*jmax_segments !anticipated number of weights (can be tweaked)
-    end if
-    if (jall_anticipated<0) then
-      write(*,*) "anticipated number of overlaps likely not representable: jall_anticipated=", jall_anticipated
-      jall_anticipated = 1080000000
-      write(*,*) "setting to large value = ",jall_anticipated
-    else
-      write(*,*) "anticipated number of overlaps jall_anticipated=", jall_anticipated
-    end if
-    
+!------------------------------------------------------------------------------------------------
+    allocate(rrfac(ncube,ncube,6))
+    rrfac = 0.0_r8
 
-    
-    nreconstruction = 1
-    allocate (weights_all(jall_anticipated,nreconstruction),stat=alloc_error )
-    allocate (weights_eul_index_all(jall_anticipated,3),stat=alloc_error )
-    allocate (weights_lgr_index_all(jall_anticipated),stat=alloc_error )
-    jall=jall_anticipated
-    
-    if (.not.lstop_after_smoothing) then
-      write(*,*) "Compute overlap weights: "
-      CALL overlap_weights(weights_lgr_index_all,weights_eul_index_all,weights_all,&
-           jall,ncube,ngauss,ntarget,ncorner,jmax_segments,target_corner_lon,target_corner_lat,nreconstruction,ldbg)
-    end if
-    deallocate(target_corner_lon,target_corner_lat)
-  end if
-  ! On exit from overlap_weights 'jall' is the correct number of cells in the exchange grid. 
+   if (.not.lstop_after_smoothing) then
+     if (nrank == 1) then
+       da_min_ncube  = 4.0 * pi / (6.0 * DBLE(ncube * ncube))
+       da_min_target = MAXVAL(target_area)
+   
+       if (da_min_target <= 0.0_r8) then
+         write(*,*) "WARNING: invalid da_min_target =", da_min_target, " — using fallback jmax_segments = 10000"
+         jmax_segments = 10000
+       else
+         seg_est = 4 * ncorner * NINT(MAX(1.0e-12_r8, da_min_target / da_min_ncube))
+         if (seg_est < 1000) then
+           write(*,*) "WARNING: very small jmax_segments estimated =", seg_est
+           jmax_segments = 10000
+         else
+           jmax_segments = MIN(50000, seg_est)
+         end if
+       end if
+   
+       write(*,*) "ncorner, da_min_target, da_min_ncube =", ncorner, da_min_target, da_min_ncube
+       write(*,*) "jmax_segments =", jmax_segments, da_min_target, da_min_ncube
+   
+     else
+       if (jmax_segments < 0) then
+         seg_est = 4 * ncorner * NINT(MAX(1.0e-12_r8, da_min_target / da_min_ncube))
+         if (da_min_target <= 0.0_r8 .or. seg_est < 1000) then
+           write(*,*) "WARNING: invalid or too small da_min_target =", da_min_target
+           jmax_segments = 10000
+         else
+           jmax_segments = MIN(50000, seg_est)
+         end if
+         write(*,*) "FINAL jmax_segments =", jmax_segments
+       else
+         write(*,*) "jmax_segments set by user =", jmax_segments
+       end if
+     end if
+   
+     jall_anticipated_8 = INT(ntarget,8) * INT(jmax_segments,8) * 3_8
+     IF (jall_anticipated_8 > HUGE(jall_anticipated) .or. &
+         REAL(ntarget, r8) * REAL(jmax_segments, r8) > huge(1.0_r8) / 3.0) THEN
+       jall_anticipated = 1080000000
+       write(*,*) "WARNING: truncating jall_anticipated to fallback value =", jall_anticipated
+     ELSE
+       jall_anticipated = jall_anticipated_8
+     END IF
+   
+     IF (jall_anticipated <= 0) THEN
+       WRITE(*,*) "WARNING: jall_anticipated <= 0! Forcing fallback value."
+       jall_anticipated = MAX(1, ntarget * 3)
+     END IF
+   
+     nreconstruction = 1
+     jall            = 0_8          ! start empty – will grow on demand
+   
+     CALL overlap_weights(weights_lgr_index_all, weights_eul_index_all, weights_all, &
+          jall, ncube, ngauss, ntarget, ncorner, jmax_segments, target_corner_lon, target_corner_lat, &
+          nreconstruction, ldbg)
+   
+     if (SIZE(weights_all, 1) == 0) then
+       write(*,*) "ERROR: weights_all size is zero after overlap_weights — check INTENT() declarations."
+       stop
+     endif
+     write(*,*) "DEBUG: Finished overlap_weights subroutine call"   
+
+     deallocate(target_corner_lon,target_corner_lat)
+   end if
   !------------------------------------------------------------------------------------------------
   
   ! Set-up regional refinement control.
@@ -641,21 +1011,38 @@ program convterr
   if (lregional_refinement) then
     !--- remap rrfac to cube
     !-----------------------------------------------------------------
+    !Setting the whole 3-D array to zero first guarantees a clean slate; 
+    !every element is then filled by the mapping loop immediately below.
+     rrfac = 0.0_r8
+
+    write(*,*) 'Entering rrfac loop, jall =', jall
     do counti=1,jall
-      i    = weights_lgr_index_all(counti)!!
-      !
+
+        if (MOD(counti, 100000) == 0) then
+            write(*,*) 'DEBUG: rrfac loop progress:', counti, '/', jall
+        end if
+
+      i   = weights_lgr_index_all(counti)
       ix  = weights_eul_index_all(counti,1)
       iy  = weights_eul_index_all(counti,2)
       ip  = weights_eul_index_all(counti,3)
-      !
+
+      !–– Skip any row whose indices are out of bounds
+      IF (ix < 1 .OR. ix > ncube .OR. iy < 1 .OR. iy > ncube .OR. &
+          ip < 1 .OR. ip > 6)                 CYCLE
+      IF (i  < 1 .OR. i  > SIZE(target_rrfac)) CYCLE
+     !
       ! convert to 1D indexing of cubed-sphere
       !
-      ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix!
-      !
+      ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix  ! flat index (not used further here)
+      !  Overlap weight for this source → target pair
       wt = weights_all(counti,1)
       !
+      ! Add weighted contribution.  Divide by cell area (dA) so the
+      ! stored value is the **mean** refinement factor for the cell
       rrfac(ix,iy,ip) = rrfac(ix,iy,ip) + wt*(target_rrfac(i))/dA(ix,iy)
     end do
+    write(*,*) 'DEBUG: completed rrfac loop'
   else
     write(*,*) " NO refinement: RRFAC = 1. everywhere "
     rrfac = 1.0_r8
@@ -725,23 +1112,37 @@ program convterr
   write(*,*) " Topo volume BEFORE smoother = ",volterr/(6*sum(da))
   write(*,*) " Topo volume  AFTER smoother = ",volterr_sm/(6*sum(da))
   write(*,*) "            Difference       = ",(volterr - volterr_sm)/(6*sum(da))
-  
-  if (ldistance_weighted_smoother) then
-    terr_sm = (volterr/volterr_sm)*terr_sm! should we do this?
+ 
+!------------------------------------------------------------
+! Optional global-volume correction after smoothing
+!
+!  Smoothing diffuses peaks more than it fills valleys, so the
+!  integrated terrain volume (and mean PHIS) usually drops a
+!  bit.  The line below rescales the smoothed field so that its
+!  volume matches the original.  Enable it if your downstream
+!  model needs strict preservation of global mean height.
+!
+!  terr_sm = (volterr / volterr_sm) * terr_sm
+!
+!------------------------------------------------------------  
+
+  if (ldistance_weighted_smoother .or. lregional_refinement) then
+    terr_sm = (volterr/volterr_sm)*terr_sm
   end if
-  volterr_sm=0.
-  do np=1,6 
+
+   volterr_sm=0.
+   do np=1,6 
     volterr_sm =  volterr_sm + sum( terr_sm(:,:,np) * da )
-    end do
-    
-    write(*,*) " Topo volume  AFTER smoother AND fixer = ",volterr_sm/(6*sum(da))
+   end do
+   write(*,*) " Topo volume  AFTER smoother AND fixer = ",volterr_sm/(6*sum(da))
     
     
     if(lfind_ridges) then
       nsw = nwindow_halfwidth
       nhalo=2*nsw
       
-      call find_local_maxes ( terr_dev, ncube, nhalo, nsw, iopt_ridge_seed )
+      call find_local_maxes ( terr_dev, ncube, nhalo, nsw, iopt_ridge_seed, &
+                              lregional_refinement, rrfac )
 
 
       call find_ridges ( terr_dev, terr, ncube, nhalo, nsw,&
@@ -921,11 +1322,15 @@ program convterr
     sgh_uf_target=0.0
     do counti=1,jall
       
-      i    = weights_lgr_index_all(counti)!!
-      !
+      i   = weights_lgr_index_all(counti)
       ix  = weights_eul_index_all(counti,1)
       iy  = weights_eul_index_all(counti,2)
       ip  = weights_eul_index_all(counti,3)
+
+        !–– Skip any row whose indices are out of bounds
+        IF (ix < 1 .OR. ix > ncube .OR. iy < 1 .OR. iy > ncube .OR. &
+            ip < 1 .OR. ip > 6)                 CYCLE
+        IF (i  < 1 .OR. i  > ntarget)           CYCLE
       !
       ! convert to 1D indexing of cubed-sphere
       !
@@ -955,7 +1360,21 @@ program convterr
       allocate( nodesC( ncube*ncube*6 ), cwghtC( ncube*ncube*6 ) )
       allocate( itrgtC( ncube*ncube*6 )  )
   
- 
+    !-----------------------------------------------------------------
+    ! Allocate rrfac only once – needed by either distance-weighted
+    ! smoother OR regional-refinement.  Safe for both cases.
+    !-----------------------------------------------------------------
+    IF (ldistance_weighted_smoother .OR. lregional_refinement) THEN
+       IF (.NOT. ALLOCATED(rrfac)) THEN
+          allocate(rrfac(ncube,ncube,6), stat=alloc_error)
+          IF (alloc_error /= 0) STOP 'alloc rrfac'
+          rrfac = 1.0_r8     ! 1 ⇒ “no refinement” default
+       END IF
+    END IF      
+
+      ! (If a later routine fills real refinement factors, only those
+      !  elements will be overwritten; everywhere else stays at 1.)
+      !-------------------------------------------------------- 
       call remapridge2cube( ncube,nhalo,nsw, &
            ncube_sph_smooth_coarse,ncube_sph_smooth_fine,lzero_negative_peaks, &
            ldevelopment_diags,lregional_refinement,  &
@@ -972,7 +1391,9 @@ program convterr
            output_grid, ldevelopment_diags,&
            terr_dev, uniqiC, uniqwC, anisoC, &
            anglxC,mxdisC,hwdthC,clngtC, &
-           riseqC,fallqC,mxvrxC,mxvryC,nodesC,cwghtC, itrgtC  )
+           riseqC,fallqC,mxvrxC,mxvryC,nodesC,cwghtC, itrgtC, &
+           lregional_refinement=lregional_refinement,   &
+           rr_factor      =rrfac   )
 
       if (lridgetiles) then 
       call remapridge2tiles ( ntarget,ncube,jall,nreconstruction,     &
@@ -980,7 +1401,9 @@ program convterr
            weights_eul_index_all(1:jall,:), &
            weights_lgr_index_all(1:jall),  &
            weights_all(1:jall,:), &
-           uniqiC,uniqwC,itrgtC,wedgoC )
+           uniqiC,uniqwC,itrgtC,wedgoC, &
+           lregional_refinement=lregional_refinement,   &
+           rr_factor      =rrfac   )
       end if      
 
       deallocate( uniqiC,uniqwC,anisoC,anglxC,mxdisC,hwdthC,clngtC, &
@@ -993,11 +1416,17 @@ program convterr
       rrfac_target = 0.0_r8
       do counti=1,jall
         
-        i    = weights_lgr_index_all(counti)!!
-        !
+        i   = weights_lgr_index_all(counti)
         ix  = weights_eul_index_all(counti,1)
         iy  = weights_eul_index_all(counti,2)
         ip  = weights_eul_index_all(counti,3)
+
+      !–– Skip any row whose indices are out of bounds  ------------------
+      IF (ix < 1 .OR. ix > ncube .OR. iy < 1 .OR. iy > ncube .OR. &
+          ip < 1 .OR. ip > 6)                CYCLE
+      IF (i  < 1 .OR. i  > ntarget)          CYCLE
+      !------------------------------------------------------------------
+
         !
         ! convert to 1D indexing of cubed-sphere
         !
@@ -1073,17 +1502,12 @@ program convterr
     if (lphis_gll) then
       call read_target_grid(grid_descriptor_fname_gll,lregional_refinement,ltarget_latlon,lpole,nlat,nlon,ntarget,ncorner,nrank,&
            target_corner_lon, target_corner_lat, target_center_lon, target_center_lat, target_area, target_rrfac)
+
       allocate (terr_target(ntarget))
       if (linterp_phis) then
         CALL bilinear_interp(ncube,ntarget,target_center_lon,target_center_lat,terr_sm(1:ncube,1:ncube,:),terr_target)
       else
-        allocate (weights_all(jall_anticipated,nreconstruction),stat=alloc_error )
-        allocate (weights_eul_index_all(jall_anticipated,3),stat=alloc_error )
-        allocate (weights_lgr_index_all(jall_anticipated),stat=alloc_error )
-        weights_all = 0.0_r8
-        weights_eul_index_all = 0
-        weights_lgr_index_all = 0
-        jall=jall_anticipated
+        jall = 0   ! dynamic fill again for GLL grid
         
         write(*,*) "Compute overlap weights for GLL grid: "
         CALL overlap_weights(weights_lgr_index_all,weights_eul_index_all,weights_all,&
@@ -1102,11 +1526,19 @@ program convterr
         
         terr_target=0.0
         do counti=1,jall        
-          i    = weights_lgr_index_all(counti)!!
-          !
+          i    = weights_lgr_index_all(counti)
           ix  = weights_eul_index_all(counti,1)
           iy  = weights_eul_index_all(counti,2)
           ip  = weights_eul_index_all(counti,3)
+
+        ! >>> Bounds check <<<
+         if (ix < 1 .or. ix > ncube .or. iy < 1 .or. iy > ncube .or. &
+            ip < 1 .or. ip > 6) then
+            !if (ldbg_rr) write(*,*) 'ERROR: Invalid indices in TERRAIN map: ', counti, &
+           !           ' ix=', ix, ' iy=', iy, ' ip=', ip
+           cycle  ! 'cycle' to skip
+         end if
+          
           !
           ! convert to 1D indexing of cubed-sphere
           !
@@ -1116,63 +1548,63 @@ program convterr
           
           terr_target (i) = terr_target (i) + wt*(terr_sm(ix,iy,ip))/area_target(i) 
         end do
-        DEALLOCATE(weights_all,weights_eul_index_all)
+        
+          !--- Clean up dynamic memory used in mapping ---!
+          IF (ALLOCATED(weights_all))             DEALLOCATE(weights_all)
+          IF (ALLOCATED(weights_eul_index_all))   DEALLOCATE(weights_eul_index_all)
+          IF (ALLOCATED(weights_lgr_index_all))   DEALLOCATE(weights_lgr_index_all)
+          IF (ALLOCATED(rrfac))                   DEALLOCATE(rrfac)
+
       end if
       CALL wrtncdf_unstructured_append_phis(ntarget,terr_target, &
            target_center_lon,target_center_lat,output_fname)
     end if
     end program convterr
-    
-  subroutine print_help
-    write (6,*) "THIS NEEDS TO BE UPDATED"
-    write (6,*) "Usage: cube_to_target [options] ..."
-    write (6,*) "Options:"
-    write (6,*) " "
-    write (6,*) "    STANDARD OPTIONS"
-    write (6,*) " "
-    write (6,*) "-u, --name_email_of_creator=<string> [required] -> name and Email address of creator"
-    write (6,*) "-g, --grid_descriptor_file=<string>  [required] -> ESMF or SCRIP compliant grid descriptor file"
-    write (6,*) "-i, --intermediate_cs_name=<string>  [required] -> intermediate cubed-sphere topo file (usually ncube3000)"
-    write (6,*) "-o, --output_grid=<string>           [required] -> identifier for output grid (e.g. ne30np4, f09x1.25, ..)"    
-    write (6,*) "-c, --smoothing_scale=<real> (in km)            -> standard 'climate' smoothing is -c=100 for 1 degree"
-    write (6,*) "-q, --output_data_directory=<string>            -> data output directory (default is output)"
-    write (6,*) " "
-    write (6,*) "    REGIONAL REFINEMENT OPTIONS"
-    write (6,*) " "
-    write (6,*) "-y, --rrfac_max=<int>   [required for var res]  -> maximum refinement level"
-    write (6,*) "-v, --rrfac_manipulation                        -> enable manipulation of rrfac (used for spectral-element grids)"
-    write (6,*) " "
-    write (6,*) "    DISTANCE WEIGHTED SMOOTHER OPTIONS (DEFAULT IS LAPLACIAN)"
-    write (6,*) " "
-    write (6,*) "-b, --distance_weighted_smoother                -> enable distance weighted smoother"
-    write (6,*) "-p, --use_prefilter                             -> -b smoother option"
-    write (6,*) "-f, --fine_radius=<int>                         -> "
-    write (6,*) " "
-    write (6,*) "   LAPLACIAN SMOOTHER OPTIONS"
-    write (6,*) " "
-    write (6,*) "-m, --smoothing_over_ocean                      -> do not restrict smoother to only smooth over land"
-    write (6,*) "-l, --smooth_phis_numcycle                      -> number of subcycles for Laplacian smoother (for stability)"
-    write (6,*) " "
-    write (6,*) "   MISCELLANEOUS OPTIONS"
-    write (6,*) " "
-    write (6,*) "-r, --no_ridges                                 -> do not compute sub-grid-scale ridges"
-    write (6,*) "-x, --stop_after_smooth                         -> stop after smoothing"
-    write (6,*) "-1, --ridge2tiles                               -> ??? "
-    write (6,*) "-z, --development_diags                         -> enable development diagnostics (for developers)"
-    write (6,*) " "
-    write (6,*) "-t, --smooth_topo_file=<string>                 -> use pre-compured smooth topo file"
-    write (6,*) "-d, --write_rrfac_to_topo_file                  -> write rrfac to final topo file (usually for debugging)"
-    write (6,*) " "
-    write (6,*) "-n, --source_data_identifier=<string>           -> source topo data identifier"
-    write (6,*) "                                                   (default gmted2010_modis_bedmachine)"
-    write (6,*) " "
-    write (6,*) "-a, --grid_descriptor_file_gll=<string>         -> grid descriptor file for dual grid configurations"
-    write (6,*) "-s, --interpolate_phis                          -> bilinear interpolate PHIS to target grid (instead of remapping)"
-    write (6,*) "-j, --jmax_segments                             -> max number of overlap segments"
 
+   subroutine print_help
+     ! Updated help text May 2025 to match actual flags in cube_to_target.x
+     write(6,*) "Usage: cube_to_target [options] ..."
+     write(6,*) "Options:"
+     write(6,*) ""
+     write(6,*) "  STANDARD OPTIONS"
+     write(6,*) ""
+     write(6,*) "-u, --name_email_of_creator=<string>       Name and email of creator (required)"
+     write(6,*) "-g, --grid_descriptor_file=<string>        ESMF or SCRIP grid descriptor (required)"
+     write(6,*) "-i, --intermediate_cs_name=<string>        Intermediate cubed-sphere topo file (required)"
+     write(6,*) "-o, --output_grid=<string>                 Identifier for output grid (e.g. PE270x1620-CF)"
+     write(6,*) "-q, --output_data_directory=<string>       Data output directory (default 'output')"
+     write(6,*) "-c, --smoothing_scale=<real>               Smoothing scale in km. Standard 'climate' smoothing is -c=100 for 1 degree"
+     write(6,*) "-f, --fine_radius=<int>                    Fine radius for distance-weighted smoother"
+     write(6,*) ""
+     write(6,*) "  REGIONAL REFINEMENT OPTIONS"
+     write(6,*) ""
+     write(6,*) "-y, --rrfac_max=<int>                      Maximum refinement factor (coarse/fine ratio; required if >1)"
+     write(6,*) "-d, --write_rrfac_to_topo_file             Write out the regional refinement factors file"
+     write(6,*) "-x, --stop_after_smooth                    Stop after smoothing (only writes rrfac)"
+     write(6,*) "-v, --rrfac_manipulation                   Enable manipulation of refinement factors (used for spectral-element grids)"
+     write(6,*) ""
+     write(6,*) "  DISTANCE WEIGHTED SMOOTHER OPTIONS"
+     write(6,*) ""
+     write(6,*) "-b, --distance_weighted_smoother           Enable distance-weighted smoother"
+     write(6,*) "-p, --use_prefilter                        Pre-filter before smoothing"
+     write(6,*) ""
+     write(6,*) "  LAPLACIAN SMOOTHER OPTIONS"
+     write(6,*) ""
+     write(6,*) "-m, --smoothing_over_ocean                 Smooth over ocean as well as land"
+     write(6,*) "-l, --smooth_phis_numcycle=<int>           Subcycles for Laplacian smoother"
+     write(6,*) ""
+     write(6,*) "  MISCELLANEOUS OPTIONS"
+     write(6,*) ""
+     write(6,*) "-r, --no_ridges                            Disable ridge detection"
+     write(6,*) "-1, --ridge2tiles                          Convert ridges to tile mask"
+     write(6,*) "-z, --development_diags                    Enable development diagnostics"
+     write(6,*) "-t, --smooth_topo_file=<string>            Use pre-computed smooth topo file"
+     write(6,*) "-n, --source_data_identifier=<string>      Source topo identifier (default 'gmted_intel')"
+     write(6,*) "-a, --grid_descriptor_file_gll=<string>    Grid descriptor for dual-grid configurations"
+     write(6,*) "-s, --interpolate_phis                     Bilinear interpolate PHIS to target grid"
+     write(6,*) "-j, --jmax_segments=<int>                  Override maximum overlap segments"
+   end subroutine print_help
 
-    stop
-  end subroutine print_help
   !
   !
   !
@@ -1557,6 +1989,7 @@ program convterr
     ! End define mode for output file
     !
     status = nf_enddef (foutid)
+    WRITE(*,*) 'DEBUG nf_enddef status = 3', status
     if (status .ne. NF_NOERR) call handle_err(status)
     !
     ! Write variable for output
@@ -1774,7 +2207,8 @@ program convterr
     ! End define mode for output file
     !
     status = nf_enddef (foutid)
-    call handle_err(1) !bmaa
+    !call handle_err(1) !bmaa
+    WRITE(*,*) 'DEBUG nf_enddef status =', status
     if (status .ne. NF_NOERR) call handle_err(status)
     !
     ! Write variable for output
@@ -2205,6 +2639,7 @@ program convterr
     ! End define mode for output file
     !
     status = nf_enddef (foutid)
+    WRITE(*,*) 'DEBUG nf_enddef status 2=', status
     if (status .ne. NF_NOERR) call handle_err(status)
     !
     ! Write variable for output
@@ -2438,234 +2873,6 @@ program convterr
     
   end subroutine handle_err
   
-  
-  !*******************************************************************************
-  !  At this point mapping arrays are calculated
-  !
-  !      weights_lgr_index_all: dimension(JALL). Index of target grid cell that contains
-  !                             current exchange grid cell
-  ! 
-  !      weights_eul_index_all: dimension(JALL,3). 3 indices of cubed-sphere grid cell that 
-  !                             contains current exchange grid cell:
-  !
-  !                                weights_eul_index_all(:,1) = x-index
-  !                                weights_eul_index_all(:,2) = y-index
-  !                                weights_eul_index_all(:,3) = panel/face number 1-6
-  !
-  !                             These are then converted to one-dimensional indices 
-  !                             for cubed sphere variables terr(n), ... etc. 
-  !
-  !      weights_all:           dimension(JALL,nreconstrunction). Spherical area of
-  !                             exchange grid cell (steradians)
-  !
-  !********************************************************************************
-  
-  
-  SUBROUTINE overlap_weights(weights_lgr_index_all,weights_eul_index_all,weights_all,&
-       jall,ncube,ngauss,ntarget,ncorner,jmax_segments,target_corner_lon,target_corner_lat,nreconstruction,ldbg)
-    use shr_kind_mod, only: r8 => shr_kind_r8
-    use remap
-    use shared_vars, only: progress_bar
-    IMPLICIT NONE
-    
-    
-    INTEGER,                                     INTENT(INOUT):: jall !anticipated number of weights
-    INTEGER,                                     INTENT(IN)   :: ncube, ngauss, ntarget, jmax_segments, ncorner, nreconstruction
-    
-    INTEGER, DIMENSION(jall,3),                  INTENT(OUT)  :: weights_eul_index_all
-    REAL(R8), DIMENSION(jall,nreconstruction)  , INTENT(OUT)  :: weights_all
-    INTEGER, DIMENSION(jall)  ,                  INTENT(OUT)  :: weights_lgr_index_all
-    
-    REAL(R8), DIMENSION(ncorner,ntarget),        INTENT(INOUT):: target_corner_lon, target_corner_lat
-    LOGICAL,                                     INTENT(IN)   :: ldbg
-    
-    INTEGER,  DIMENSION(9*(ncorner+1)) :: ipanel_tmp,ipanel_array
-    REAL(R8), DIMENSION(ncorner)  :: lat, lon
-    REAL(R8), DIMENSION(0:ncube+2):: xgno, ygno
-    REAL(R8), DIMENSION(0:ncorner+1) :: xcell, ycell
-    
-    REAL(R8), DIMENSION(ngauss) :: gauss_weights, abscissae
-    
-    REAL(R8) :: da, tmp, alpha, beta
-    REAL    (r8):: pi,piq,pih
-    INTEGER :: i, j,ncorner_this_cell,k,ip,ipanel,ii,jx,jy,jcollect
-    integer :: alloc_error, ilon,ilat
-    
-    REAL    (r8) :: rad2deg
-    REAL    (r8) :: deps
-    
-    real(r8), allocatable, dimension(:,:) :: weights
-    integer , allocatable, dimension(:,:) :: weights_eul_index
-    
-    INTEGER :: jall_anticipated, count
-    
-    pi = 4.D0*DATAN(1.D0)
-    piq = pi/4.D0
-    pih = pi*0.5D0
-    rad2deg = 180.D0/pi
-    
-    deps = 10.0D0*pi/180.0_r8
-    
-    jall_anticipated = jall
-    
-    ipanel_array = -99
-    !
-    da = pih/DBLE(ncube)
-    xgno(0) = -bignum
-    DO i=1,ncube+1
-      xgno(i) = TAN(-piq+(i-1)*da)
-    END DO
-    xgno(ncube+2) = bignum
-    ygno = xgno
-    
-    CALL glwp(ngauss,gauss_weights,abscissae)
-    
-    
-    allocate (weights(jmax_segments,nreconstruction),stat=alloc_error )
-    allocate (weights_eul_index(jmax_segments,2),stat=alloc_error )
-    
-    tmp = 0.0
-    jall = 1
-    DO i=1,ntarget
-      if (MOD(i,10)==0)call progress_bar("# ", i, DBLE(100*i)/DBLE(ntarget))
-      !
-      !---------------------------------------------------          
-      !
-      ! determine how many vertices the cell has
-      !
-      !---------------------------------------------------
-      !
-      CALL remove_duplicates_latlon(ncorner,target_corner_lon(:,i),target_corner_lat(:,i),&
-           ncorner_this_cell,lon,lat,1.0E-10)
-      
-      IF (ldbg) THEN
-        WRITE(*,*) "number of vertices ",ncorner_this_cell
-        WRITE(*,*) "vertices locations lon,",lon(1:ncorner_this_cell)*rad2deg
-        WRITE(*,*) "vertices locations lat,",lat(1:ncorner_this_cell)*rad2deg
-        DO j=1,ncorner_this_cell
-          WRITE(*,*) lon(j)*rad2deg, lat(j)*rad2deg
-        END DO
-        WRITE(*,*) "  "
-      END IF
-      !
-      !---------------------------------------------------
-      !
-      ! determine how many and which panels the cell spans
-      !
-      !---------------------------------------------------          
-      !
-#ifdef old    
-      DO j=1,ncorner_this_cell
-        CALL CubedSphereABPFromRLL(lon(j), lat(j), alpha, beta, ipanel_tmp(j), .TRUE.)
-        IF (ldbg) WRITE(*,*) "ipanel for corner ",j," is ",ipanel_tmp(j)
-      END DO
-      ipanel_tmp(ncorner_this_cell+1) = ipanel_tmp(1)
-      ! make sure to include possible overlap areas not on the face the vertices are located
-      IF (MINVAL(lat(1:ncorner_this_cell))<-pi/6.0) THEN
-        ! include South-pole panel in search
-        ipanel_tmp(ncorner_this_cell+1) = 5
-        IF (ldbg) WRITE(*,*)  "add panel 5 to search"
-      END IF
-      IF (MAXVAL(lat(1:ncorner_this_cell))>pi/6.0) THEN
-        ! include North-pole panel in search
-        ipanel_tmp(ncorner_this_cell+1) = 6
-        IF (ldbg) WRITE(*,*)  "add panel 6 to search"
-      END IF
-      CALL remove_duplicates_integer(ncorner_this_cell+1,ipanel_tmp(1:ncorner_this_cell+1),&
-           k,ipanel_array(1:ncorner_this_cell+1))
-#endif
-      !
-      ! make sure to include possible overlap areas not on the face the vertices are located
-      ! For example, a cell could be on panel 3 and 5 but have overlap area on panel 2
-      count = 0
-      do ilat=-1,1
-        do ilon=-1,1
-          DO j=1,ncorner_this_cell
-            count=count+1
-            CALL CubedSphereABPFromRLL(lon(j)+ilon*deps, lat(j)+ilat*deps, alpha, beta, ipanel_tmp(count), .TRUE.)
-          END DO
-        end do
-      end do
-      
-      !
-      ! remove duplicates in ipanel_tmp
-      !
-      CALL remove_duplicates_integer(count,ipanel_tmp(1:count),&
-           k,ipanel_array(1:count))
-      !
-      !---------------------------------------------------
-      !
-      ! loop over panels with possible overlap areas
-      !
-      !---------------------------------------------------          
-      !
-      DO ip = 1,k
-        ipanel = ipanel_array(ip)
-        DO j=1,ncorner_this_cell
-          ii = ipanel
-          CALL CubedSphereABPFromRLL(lon(j), lat(j), alpha, beta, ii,.FALSE.)            
-          IF (j==1) THEN
-            jx = CEILING((alpha + piq) / da)
-            jy = CEILING((beta  + piq) / da)
-          END IF
-          xcell(ncorner_this_cell+1-j) = TAN(alpha)
-          ycell(ncorner_this_cell+1-j) = TAN(beta)
-        END DO
-        xcell(0) = xcell(ncorner_this_cell)
-        ycell(0) = ycell(ncorner_this_cell)
-        xcell(ncorner_this_cell+1) = xcell(1)
-        ycell(ncorner_this_cell+1) = ycell(1)
-        
-        jx = MAX(MIN(jx,ncube+1),0)
-        jy = MAX(MIN(jy,ncube+1),0)
-        
-        CALL compute_weights_cell(xcell(0:ncorner_this_cell+1),ycell(0:ncorner_this_cell+1),&
-             jx,jy,nreconstruction,xgno,ygno,&
-             1, ncube+1, 1,ncube+1, tmp,&
-             ngauss,gauss_weights,abscissae,weights,weights_eul_index,jcollect,jmax_segments,&
-             ncube,0,ncorner_this_cell,ldbg,i)
-        
-        weights_all(jall:jall+jcollect-1,1:nreconstruction)  = weights(1:jcollect,1:nreconstruction)
-        
-        
-        !weights_eul_index_all(jall:jall+jcollect-1,1:2) = weights_eul_index(1:jcollect,:)
-        weights_eul_index_all(jall:jall+jcollect-1,  1) = weights_eul_index(1:jcollect,1)
-        weights_eul_index_all(jall:jall+jcollect-1,  2) = weights_eul_index(1:jcollect,2)
-        weights_eul_index_all(jall:jall+jcollect-1,  3) = ipanel
-        weights_lgr_index_all(jall:jall+jcollect-1    ) = i
-        
-        jall = jall+jcollect
-        IF (jall>jall_anticipated) THEN
-          WRITE(*,*) "more weights than anticipated"
-          WRITE(*,*) "increase jall"
-          STOP
-        END IF
-        IF (ldbg) WRITE(*,*) "jcollect",jcollect
-      END DO
-    END DO
-    jall = jall-1
-    WRITE(*,*) "sum of all weights divided by surface area of sphere  =",tmp/(4.0*pi)
-    WRITE(*,*) "actual number of weights",jall
-    WRITE(*,*) "anticipated number of weights",jall_anticipated
-    IF (jall>jall_anticipated) THEN
-      WRITE(*,*) "anticipated number of weights < actual number of weights"
-      WRITE(*,*) "increase jall!"
-      STOP
-    END IF
-    !  WRITE(*,*) MINVAL(weights_all(1:jall,1)),MAXVAL(weights_all(1:jall,1))
-    
-    IF (ABS(tmp/(4.0*pi))-1.0>0.001) THEN
-      WRITE(*,*) "sum of all weights does not match the surface area of the sphere"
-      WRITE(*,*) "sum of all weights is : ",tmp
-      WRITE(*,*) "surface area of sphere: ",4.0*pi
-      STOP
-    END IF
-    
-    
-    
-    
-  END SUBROUTINE overlap_weights
-  
   SUBROUTINE bilinear_interp(ncube,ntarget,target_center_lon,target_center_lat,terr_cube,terr_target)
     use shr_kind_mod, only: r8 => shr_kind_r8
     use shared_vars, only: progress_bar
@@ -2741,7 +2948,13 @@ program convterr
     REAL    (R8) :: xx, yy, zz, pm
     REAL    (R8) :: sx, sy, sz
     INTEGER  :: ix, iy, iz
+
+    IF (ISNAN(lon) .OR. ISNAN(lat)) THEN
+      WRITE(*,*) 'ERROR: NaN detected in CubedSphereABPFromRLL input: lon=', lon, ' lat=', lat
+      STOP
+    ENDIF
     
+
     ! Translate to (x,y,z) space
     xx = COS(lon-rotate_cube) * COS(lat)
     yy = SIN(lon-rotate_cube) * COS(lat)
@@ -2818,7 +3031,7 @@ program convterr
       ! Use panel information to calculate (alpha, beta) coords
       alpha = ATAN(sx / sz)
       beta = ATAN(sy / sz)
-      
+
     END SUBROUTINE CubedSphereABPFromRLL
     
         !------------------------------------------------------------------------------

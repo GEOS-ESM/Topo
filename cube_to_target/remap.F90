@@ -20,71 +20,90 @@ MODULE remap
 
   contains
 
+!===============================================================================
+!  remap_field
+!
+!  Purpose:
+!    Maps data from a cubed-sphere source grid (with flat 1D indexing) to a 
+!    lat/lon target grid using precomputed overlap weights. This function 
+!    is used to remap fields like terrain height, land fraction, etc.
+!
+!  Concepts:
+!    - Source grid ('eul'):    The equal-area cubed sphere (6 panels of ncube x ncube cells)
+!    - Target grid ('lgr'):    The destination grid, typically a spectral element grid
+!    - Exchange grid:          Virtual cells formed by intersecting source and target grids;
+!                              each remap weight corresponds to one exchange cell.
+!    - nreconstruction = 1:    This setting assumes piecewise constant values in each source cell
+!
+!  Inputs:
+!    - field:               Flattened source field (6 faces of the cube)
+!    - area_target:         Area of each target grid cell
+!    - weights_all:         Overlap weights (one per exchange-grid segment)
+!    - weights_eul_index_all: For each overlap segment, the (ix, iy, ipanel)
+!                             index into the source cubed-sphere field
+!    - weights_lgr_index_all: For each segment, the index of the target grid cell
+!    - ncube:               Resolution of cubed-sphere face
+!    - jall:                Number of overlap segments (dynamically filled)
+!    - nreconstruction:     Number of fields per segment (usually 1)
+!    - ntarget:             Number of target grid cells
+!
+!  Output:
+!    - f(ntarget):          The resulting remapped field on the target grid
+!
+!  Notes:
+!    - Assumes all inputs are valid and consistent
+!    - Performs index and area safety checks for robustness
+!    - Compatible with stretched grid remapping
+!
+!===============================================================================
 
-  !*******************************************************************************
-  !
-  ! Begin calculation of overlap weights
-  !
-  !*******************************************************************************
-  ! Concepts:
-  !    source grid ('eul') : Cells on which data (e.g. elevation) is provided.
-  !                          Here this grid is the equal-area cubed sphere with 
-  !                          6 panels of ncube x ncube cells
-  !
-  !    target grid ('lgr') : Cells to which data is mapped from 'eul'. Here
-  !                          this will normally be a spectral element grid with
-  !                          ntarget cells
-  !
-  !    exchange grid       : Cells formed by cutting the source grid and target 
-  !                          grid through each other. The number of cells in this 
-  !                          grid is difficult to know a-priori. Will be determined
-  !                          in subroutine overlap_weights
-  !                    
-  !    nreconstruction     : Here set to 1 (a few lines above). Order of subgrid reconstruction
-  !                          function in source grid cells. 1 means assumed piecewise constant 
-  !                          in source cells
-  !
-  !********************************************************************************
-
-
-
-    function remap_field(field,area_target,weights_eul_index_all,weights_lgr_index_all,weights_all,ncube,jall,&
-         nreconstruction,ntarget) result(f)
-      use shr_kind_mod, only: r8 => shr_kind_r8
-      implicit none
-      real(r8), intent(in) :: weights_all(jall,nreconstruction)
-      integer , intent(in) :: weights_eul_index_all(jall,3),weights_lgr_index_all(jall)
-      integer , intent(in) :: ncube,jall,nreconstruction,ntarget
-      real(r8), intent(in) :: field(6*ncube*ncube),area_target(ntarget)
-      real(r8):: f(ntarget)
-      
-      
-      integer :: i,ix,iy,ip,ii,counti
-      real(r8):: wt
-      real(r8):: ftarget(ntarget)
-      
-      f=0.0D0
-      do counti=1,jall
-        i    = weights_lgr_index_all(counti)
-        
-        ix  = weights_eul_index_all(counti,1)
-        iy  = weights_eul_index_all(counti,2)
-        ip  = weights_eul_index_all(counti,3)
-
-        !
-        ! convert to 1D indexing of cubed-sphere
-        !
-        ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix
-        
-        wt = weights_all(counti,1)
-        
-        ! Note:  Factor wt/area_target(i) is fractional overlap of target and source grid
-        ! cells
-        !
-        f(i) = f(i) + wt*field(ii)/area_target(i)
-  end do
-end function remap_field
-
+  
+  function remap_field(field, area_target, weights_eul_index_all, weights_lgr_index_all, weights_all, ncube, jall, nreconstruction, ntarget) result(f)
+    use shr_kind_mod, only: r8 => shr_kind_r8,i8 => shr_kind_i8
+    implicit none
+  
+    ! Input arguments
+    real(r8), intent(in) :: field(6*ncube*ncube)         ! Flattened field over cubed sphere
+    real(r8), intent(in) :: area_target(ntarget)         ! Area of each target grid cell
+    real(r8), intent(in) :: weights_all(:,:)             ! Overlap weights per segment (jall, nreconstruction)
+    integer , intent(in) :: weights_eul_index_all(:,:)   ! Indices of cube grid cells (jall, 3)
+    integer , intent(in) :: weights_lgr_index_all(:)     ! Target grid cell indices (jall)
+    integer , intent(in) :: ncube, nreconstruction, ntarget
+    integer(i8), intent(in) :: jall
+  
+    ! Output
+    real(r8) :: f(ntarget)                               ! Result field mapped onto target grid
+  
+    ! Locals
+    integer :: i, ix, iy, ip, ii, counti
+    real(r8) :: wt
+  
+    f = 0.0_r8    ! Initialize result field to zero
+  
+    ! Loop over each overlap segment and accumulate weighted contributions
+    do counti = 1, jall
+      i  = weights_lgr_index_all(counti)        ! Target cell index
+      ix = weights_eul_index_all(counti,1)      ! Cube x-index
+      iy = weights_eul_index_all(counti,2)      ! Cube y-index
+      ip = weights_eul_index_all(counti,3)      ! Cube panel index (1–6)
+  
+      ! Skip invalid indices
+      if (i < 1 .or. i > ntarget) cycle
+      if (ix < 1 .or. ix > ncube) cycle
+      if (iy < 1 .or. iy > ncube) cycle
+      if (ip < 1 .or. ip > 6)     cycle
+      if (area_target(i) <= 0.0_r8) cycle
+  
+      ! Convert (ix,iy,ip) triple to flat index
+      ii = (ip - 1) * ncube * ncube + (iy - 1) * ncube + ix
+      if (ii < 1 .or. ii > 6*ncube*ncube) cycle
+  
+      ! Compute weight contribution from this overlap segment
+      wt = weights_all(counti, 1)
+      f(i) = f(i) + wt * field(ii) / area_target(i)
+    end do
+  
+  end function remap_field
 
 !==============================================================================================================
     function select_sg_field(field,weights_eul_index_all,weights_lgr_index_all,ncube,jall,&
@@ -235,12 +254,14 @@ end function paint_sg_field
     !
     ! this module assumes that cells are specified clockwise (not counter-clockwise); CHECK
     !
+
     signed_area=0.0
     do i=1,nvertex
 !      signed_area=signed_area+xcell_in(i)*ycell_in(i+1)-xcell_in(i+1)*ycell(i)
       signed_area=signed_area+(xcell_in(i+1)+xcell_in(i))*(ycell_in(i+1)-ycell_in(i))
     end do
     signed_area=0.5*signed_area
+
     if (signed_area>0.0) then
       write(*,*) "area must be clockwise (and counter clockwise in input file)"
       do i=0,nvertex
@@ -291,13 +312,13 @@ end function paint_sg_field
     xcell = xcell_in(1:nvertex)
     ycell = ycell_in(1:nvertex)
 
-
     !
     ! this is to avoid ill-conditioning problems
     !
     eps = 1.0E-9
 
     jsegment = 0
+
     weights  = 0.0D0
     jcross_lat = 0
     !
@@ -313,7 +334,6 @@ end function paint_sg_field
       STOP
     END IF
 
-    
     call side_integral(xcell,ycell,nvertex,jsegment,jmax_segments,&
          weights,weights_eul_index,nreconstruction,jx,jy,xgno,ygno,jx_min, jx_max, jy_min, jy_max,&
          ngauss,gauss_weights,abscissae,&
@@ -340,6 +360,7 @@ end function paint_sg_field
     ! collect line-segment that reside in the same Eulerian cell
     !
     if (jsegment>0) then
+
       call collect(weights,weights_eul_index,nreconstruction,jcollect,jsegment,jmax_segments)
       !
       ! DBG
