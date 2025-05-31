@@ -101,30 +101,23 @@ CONTAINS
 
     !read_in_precomputed = .FALSE.
     read_in_precomputed = lread_smooth_topofile  !.TRUE.
+    read_in_and_refine = lread_smooth_topofile .and. lregional_refinement
     use_prefilter = luse_prefilter 
     stop_after_smoothing = lstop_after_smoothing 
     smooth_topo_cubesph = .TRUE.  
-    read_in_and_refine=.FALSE.
+
+    write(*,*) "DEBUG: read_in_and_refine =", read_in_and_refine
 
     IF (read_in_precomputed) then
-      write(*,*) " Read precomputed filtered topography from ",trim(smooth_topo_fname)
-      if (lregional_refinement) then
-        call read_topo_smooth_data(smooth_topo_fname,ncube*ncube*6,terr_sm,terr_dev)
-      else
-        call read_topo_smooth_data(smooth_topo_fname,ncube*ncube*6,terr_sm,terr_dev)
-      end if
-      ! return to main program after
-      ! reading topography variables
-
-      ! Handle refinement-specific memory capture
-      if (read_in_and_refine .and. lregional_refinement) then
-          terr_sm00  = terr_sm
-          terr_dev00 = terr_dev
-      else
-          terr_sm00  = terr
-          terr_dev00 = 0.0_r8
-      end if
-    END IF   ! close read_in_precomputed  
+       write(*,*) " Read precomputed filtered topography from ",trim(smooth_topo_fname)
+       call read_topo_smooth_data(smooth_topo_fname,ncube*ncube*6,terr_sm,terr_dev)
+    
+       if (.NOT. lregional_refinement) RETURN  ! explicitly preserve original early-return logic
+    
+       ! Proceed only if refinement is requested
+       terr_sm00  = terr_sm
+       terr_dev00 = terr_dev
+    END IF
 
      ! If your are here and read_in_and_refine=.FALSE. then
      ! then you must want to generate a new smooth topo.  So 
@@ -330,7 +323,13 @@ CONTAINS
        ! coarse grid, so stretched runs are stable while regular runs remain
        ! bit-for-bit identical to the historical smoother.
        !========================================================================================
-         
+       write(*,*) "Before smoothing checks:"
+       write(*,*) "terr min/max:", MINVAL(terr), MAXVAL(terr)
+       write(*,*) "rrfac min/max:", MINVAL(rrfac), MAXVAL(rrfac)
+       write(*,*) "landfrac min/max:", MINVAL(landfrac), MAXVAL(landfrac)
+       write(*,*) "nu_lap_unit_sphere:", nu_lap_unit_sphere
+       write(*,*) "dt:", dt
+       write(*,*) "stretch_factor:", stretch_factor         
          if (.not. do_schmidt) then
             !––– ORIGINAL UNIFORM SMOOTHER ––––––––––––––––––––––––––––
             write(*,*) "Smooth height (uniform)"
@@ -343,7 +342,7 @@ CONTAINS
                call progress_bar("# ", iter, 100.0_r8*iter/smooth_phis_numcycle)
                call laplacian(terr_sm, ncube, lap, landfrac_local, lsmoothing_over_ocean)
                terr_sm = terr_sm + lap*dt*nu_lap_unit_sphere*rrfac_sm
-         
+
                if (MAXVAL(terr_sm) > 1.2_r8*max_terr .or. MINVAL(terr_sm) < min_terr-500._r8) then
                   write(*,*) "Laplace iteration seems to be unstable:"
                   write(*,*) "MIN, MAX(terr_sm) =", MINVAL(terr_sm), MAXVAL(terr_sm)
@@ -408,7 +407,11 @@ CONTAINS
       write(*,*) " Topo volume  AFTER smoother = ",volterr_sm/(6*sum(da))
       write(*,*) "            Difference       = ",(volterr_in - volterr_sm)/(6*sum(da))
 
+      write(*,*) "Before rescaling terr_sm min/max:", MINVAL(terr_sm), MAXVAL(terr_sm)
+      write(*,*) "volterr_in, volterr_sm:", volterr_in, volterr_sm
+
       terr_sm = (volterr_in/volterr_sm)*terr_sm
+      write(*,*) "After rescaling terr_sm min/max:", MINVAL(terr_sm), MAXVAL(terr_sm)
       volterr_sm=0.
       do ip=1,6 
          volterr_sm =  volterr_sm + sum( terr_sm(:,:,ip) * da )
@@ -423,6 +426,9 @@ CONTAINS
       
       ! Now do the subtraction
       terr_dev = terr_orig - terr_sm
+      write(*,*) "terr_orig min/max:", MINVAL(terr_orig), MAXVAL(terr_orig)
+      write(*,*) "terr_sm min/max (final):", MINVAL(terr_sm), MAXVAL(terr_sm)
+
 
       if (read_in_and_refine) then
         where( rr_updt <= 1. )

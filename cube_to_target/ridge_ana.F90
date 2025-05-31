@@ -391,11 +391,6 @@ subroutine find_ridges ( terr_dev, terr_raw, ncube, nhalo, nsw,     &
     do_refine = .FALSE.
     if(present(lregional_refinement)) do_refine = lregional_refinement
 
-    if(do_refine) then
-      write(*,*) "regional refinement not merged - ABORT"
-      !STOP
-    end if
-
     npeaks = size( peaks% i )
    
 write(*,*) " size of peaks in find_ridge ", npeaks
@@ -1116,7 +1111,7 @@ end subroutine THINOUT_LIST
 !                      fv_0.9x1.25_nc3000_Nsw042_Nrs008_Co060_Fi001_20211102.nc
 !===========================================
 
-      use shr_kind_mod, only: r8 => shr_kind_r8
+      use shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
       use remap
       use reconstruct !, only : EquiangularAllAreas
       implicit none
@@ -1141,7 +1136,7 @@ end subroutine THINOUT_LIST
       
       integer :: alloc_error
 
-      integer :: i,ix,iy,ip,ii,counti,norx,nory,i_last,isubr,iip,j,ipk,npeaks
+      integer :: i,ix,iy,ip,ii,norx,nory,i_last,isubr,iip,j,ipk,npeaks
       integer :: nswx,nrs_junk
       real(r8):: wt
       real(KIND=dbl_kind), dimension(1-nhalo:ncube+nhalo,1-nhalo:ncube+nhalo ,6) :: tmpx6
@@ -1155,6 +1150,7 @@ end subroutine THINOUT_LIST
       CHARACTER(len=1024) :: ofile
       character(len=8)  :: date
       character(len=10) :: time
+      integer(i8)  :: counti
 
 !----------------------------------------------------------------------------------------------------
 
@@ -1345,6 +1341,7 @@ end subroutine THINOUT_LIST
       logical,            intent(in) :: ldevelopment_diags
       logical,            optional, intent(in) :: lregional_refinement
       real(kind=dbl_kind),optional, intent(in) :: rr_factor(:,:,:)
+      integer(i8)                              :: counti
       logical :: use_rr
 
       integer,dimension(ncube*ncube*6),intent(out)  :: itrgtC
@@ -1364,7 +1361,7 @@ end subroutine THINOUT_LIST
         
       integer :: alloc_error
 
-      integer :: i,ix,iy,ip,ii,counti,norx,nory,i_last,isubr,iip,j,ipk,npeaks
+      integer :: i,ix,iy,ip,ii,norx,nory,i_last,isubr,iip,j,ipk,npeaks
       integer :: nswx,nrs_junk
       real(r8):: wt
       !!real(KIND=dbl_kind), dimension(ncube*ncube*6) :: itrgtC, itrgxC
@@ -1437,7 +1434,7 @@ end subroutine THINOUT_LIST
 !      In the following loop "counti" is the index of a piece of 
 !      the "exchange grid" - created by cutting the cubed-sphere topo
 !      and target grid into each other.  
-    do counti=1,jall
+    do counti=1_i8,jall
      
       i    = weights_lgr_index_all(counti)
 
@@ -1447,16 +1444,22 @@ end subroutine THINOUT_LIST
       !
       ! convert to 1D indexing of cubed-sphere
       !
+      if (ix<1 .or. ix>ncube .or. iy<1 .or. iy>ncube .or. ip<1 .or. ip>6) cycle
       ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix
+      if (ii<1 .or. ii>6*ncube*ncube) cycle
       
       wt = weights_all(counti,1) * wgt(ix,iy,ip)   ! add for stretched grid,  multiply by refinement weight
 
       iip=(iy-1)*ncube+ix
+      if (iip<1 .or. iip>ncube*ncube) cycle
 
-      itrgtC(ii) = i
-      if (mxdisC(ii) > 0.1)  itrgxC(ii) = i
-      isubr = INT( anglxC(ii) * nsubr/180. ) + 1
-      if ( (isubr >= 1).and.(isubr <= nsubr) ) then
+      isubr = max(1, min(nsubr, INT( anglxC(ii) * nsubr/180. ) + 1))
+
+      !itrgtC(ii) = i
+      !if (mxdisC(ii) > 0.1)  itrgxC(ii) = i
+      !isubr = INT( anglxC(ii) * nsubr/180. ) + 1
+      !if ( (isubr >= 1).and.(isubr <= nsubr) ) then
+      if (i>=1 .and. i<=ntarget .and. isubr>=1 .and. isubr<=nsubr) then
       wghts_target( i , isubr ) = wghts_target( i , isubr ) + wt
       hwdth_target( i , isubr ) = hwdth_target( i , isubr ) + wt*hwdthC(ii)
       mxvrx_target( i , isubr ) = mxvrx_target( i , isubr ) + wt*mxvrxC(ii)
@@ -1469,6 +1472,8 @@ end subroutine THINOUT_LIST
       count_target( i , isubr ) = count_target( i , isubr ) + wt/dA(iip)
       fallq_target( i , isubr ) = fallq_target( i , isubr ) + wt*fallqC(ii)
       riseq_target( i , isubr ) = riseq_target( i , isubr ) + wt*riseqC(ii)
+      else 
+      write(*,*) "Index out-of-bounds detected, skipping contribution:", i, isubr
       endif
 
       i_last = i
@@ -1523,7 +1528,7 @@ end subroutine THINOUT_LIST
 !      In the following loop "counti" is the index of a piece of 
 !      the "exchange grid" - created by cutting the cubed-sphere topo
 !      and target grid into each other.  
-    do counti=1,jall
+    do counti=1_i8,jall
        i    = weights_lgr_index_all(counti)
 
        ix  = weights_eul_index_all(counti,1)
@@ -1532,7 +1537,11 @@ end subroutine THINOUT_LIST
        !
        ! convert to 1D indexing of cubed-sphere
        !
+       ! Check bounds explicitly
+       if (ix<1 .or. ix>ncube .or. iy<1 .or. iy>ncube .or. ip<1 .or. ip>6) cycle
        ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix
+       if (ii<1 .or. ii>6*ncube*ncube) cycle
+       if (i<1 .or. i>ntarget) cycle       
 
        wt = weights_all(counti,1) * wgt(ix,iy,ip)   ! add for stretched grid,  multiply by refinement weight
 
@@ -1605,7 +1614,7 @@ end subroutine THINOUT_LIST
         
       integer :: alloc_error
       integer :: npack,NobMin,NobMax,iir,iic,maxtiles,npeaks
-      integer :: i,ix,iy,ip,ii,counti,norx,nory,i_last,isubr,iip,j,ipk,ir
+      integer :: i,ix,iy,ip,ii,norx,nory,i_last,isubr,iip,j,ipk,ir
       integer :: nswx,nrs_junk,ig,nalloc,n,ird,ThisRidge,k,nf1,nf2,IdxMin,IdxMax
       real(r8):: wt,wght
       integer,             dimension(ncube*ncube*6) :: xcoord,ycoord,pcoord
@@ -1638,6 +1647,7 @@ end subroutine THINOUT_LIST
       real(kind=dbl_kind),optional, intent(in) :: rr_factor(:,:,:)
       real(r8), allocatable, dimension(:) :: wgtPack
       logical :: use_rr
+      integer(i8)  :: counti
 
       use_rr = present(lregional_refinement) .and. lregional_refinement
 
@@ -1676,7 +1686,7 @@ end subroutine THINOUT_LIST
       MyCrests  = 0
       LnCrests  = 0._r8
 
-      do counti=1,jall
+      do counti=1_i8,jall
          i   = weights_lgr_index_all(counti)
          ix  = weights_eul_index_all(counti,1)
          iy  = weights_eul_index_all(counti,2)
@@ -1684,7 +1694,11 @@ end subroutine THINOUT_LIST
          !
          ! convert to 1D indexing of cubed-sphere
          !
+         if (ix<1 .or. ix>ncube .or. iy<1 .or. iy>ncube .or. ip<1 .or. ip>6) cycle
          ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix
+         if (ii<1 .or. ii>6*ncube*ncube) cycle
+         if (i<1 .or. i>ntarget) cycle         
+
          if (itrgtC(ii)==i) then
             idcoun(i)   = idcoun(i)+1
             idxmap(idcoun(i),i)= ii

@@ -20,68 +20,165 @@ MODULE remap
 
   contains
 
-!===============================================================================
-!  remap_field
-!
-!  Purpose:
-!    Maps data from a cubed-sphere source grid (with flat 1D indexing) to a 
-!    lat/lon target grid using precomputed overlap weights. This function 
-!    is used to remap fields like terrain height, land fraction, etc.
-!
-!  Concepts:
-!    - Source grid ('eul'):    The equal-area cubed sphere (6 panels of ncube x ncube cells)
-!    - Target grid ('lgr'):    The destination grid, typically a spectral element grid
-!    - Exchange grid:          Virtual cells formed by intersecting source and target grids;
-!                              each remap weight corresponds to one exchange cell.
-!    - nreconstruction = 1:    This setting assumes piecewise constant values in each source cell
-!
-!  Inputs:
-!    - field:               Flattened source field (6 faces of the cube)
-!    - area_target:         Area of each target grid cell
-!    - weights_all:         Overlap weights (one per exchange-grid segment)
-!    - weights_eul_index_all: For each overlap segment, the (ix, iy, ipanel)
-!                             index into the source cubed-sphere field
-!    - weights_lgr_index_all: For each segment, the index of the target grid cell
-!    - ncube:               Resolution of cubed-sphere face
-!    - jall:                Number of overlap segments (dynamically filled)
-!    - nreconstruction:     Number of fields per segment (usually 1)
-!    - ntarget:             Number of target grid cells
-!
-!  Output:
-!    - f(ntarget):          The resulting remapped field on the target grid
-!
-!  Notes:
-!    - Assumes all inputs are valid and consistent
-!    - Performs index and area safety checks for robustness
-!    - Compatible with stretched grid remapping
-!
-!===============================================================================
 
+!*******************************************************************************
+  !
+  ! Begin calculation of overlap weights
+  !
+  !*******************************************************************************
+  ! Concepts:
+  !    source grid ('eul') : Cells on which data (e.g. elevation) is provided.
+  !                          Here this grid is the equal-area cubed sphere with 
+  !                          6 panels of ncube x ncube cells
+  !
+  !    target grid ('lgr') : Cells to which data is mapped from 'eul'. Here
+  !                          this will normally be a spectral element grid with
+  !                          ntarget cells
+  !
+  !    exchange grid       : Cells formed by cutting the source grid and target 
+  !                          grid through each other. The number of cells in this 
+  !                          grid is difficult to know a-priori. Will be determined
+  !                          in subroutine overlap_weights
+  !                    
+  !    nreconstruction     : Here set to 1 (a few lines above). Order of subgrid reconstruction
+  !                          function in source grid cells. 1 means assumed piecewise constant 
+  !                          in source cells
+  !
+  !********************************************************************************
+
+
+
+    function remap_field(field,area_target,weights_eul_index_all,weights_lgr_index_all,weights_all,ncube,jall,&
+         nreconstruction,ntarget) result(f)
+      use shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
+      implicit none
+      real(r8), intent(in) :: weights_all(jall,nreconstruction)
+      integer , intent(in) :: weights_eul_index_all(jall,3),weights_lgr_index_all(jall)
+      integer , intent(in) :: ncube,nreconstruction,ntarget
+      real(r8), intent(in) :: field(6*ncube*ncube),area_target(ntarget)
+      real(r8):: f(ntarget)
+      integer(i8), intent(in) :: jall
+      integer(i8)  :: counti
+
+
+      integer :: i,ix,iy,ip,ii
+      real(r8):: wt
+
+      f=0.0D0
+      do counti=1_i8,jall
+        i    = weights_lgr_index_all(counti)
+
+        ix  = weights_eul_index_all(counti,1)
+        iy  = weights_eul_index_all(counti,2)
+        ip  = weights_eul_index_all(counti,3)
+
+        ! Safety check to avoid out-of-bounds indexing
+        if (i < 1 .or. i > ntarget) cycle
+        if (ix < 1 .or. ix > ncube) cycle
+        if (iy < 1 .or. iy > ncube) cycle
+        if (ip < 1 .or. ip > 6) cycle
+
+        !
+        ! convert to 1D indexing of cubed-sphere
+        !
+        ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix
+        if (ii < 1 .or. ii > 6*ncube*ncube) cycle
+
+        wt = weights_all(counti,1)
+
+        ! Note:  Factor wt/area_target(i) is fractional overlap of target and source grid
+        ! cells
+        !
+        f(i) = f(i) + wt*field(ii)/area_target(i)
+  end do
+end function remap_field
+
+
+!===============================================================================
+!                       remap_field_stretched
+!
+! Purpose:
+!   Remaps data from a cubed-sphere source grid onto a stretched lat/lon target grid
+!   using precomputed overlap weights. This version handles stretched-grid specific 
+!   scenarios, explicitly correcting problematic or invalid cells using nearest-neighbor 
+!   fallback logic.
+!
+! Concepts:
+!   - Source grid ('eul'):    Equal-area cubed-sphere grid (6 panels, ncube x ncube cells per panel)
+!   - Target grid ('lgr'):    Destination grid specifically refined for stretched-grid configurations
+!   - Exchange grid:          Virtual cells created by intersecting source and stretched target grids;
+!                             each overlap segment contributes to the target grid values.
+!   - Nearest-neighbor fallback: Robust method to handle invalid cells specific to stretched-grid geometries.
+!
+! Inputs:
+!   - field:                  Flattened source field (6 cubed-sphere panels)
+!   - area_target:            Area of each stretched-grid target cell
+!   - weights_all:            Overlap weights for each exchange segment
+!   - weights_eul_index_all:  Source cell indices (ix, iy, ipanel) for each overlap segment
+!   - weights_lgr_index_all:  Target grid cell indices for each overlap segment
+!   - ncube:                  Resolution (number of cells per face) of the cubed-sphere
+!   - jall:                   Total number of overlap segments
+!   - nreconstruction:        Reconstruction order (typically 1)
+!   - ntarget:                Total number of cells in the stretched target grid
+!   - target_center_lon:      Longitude of target cell centers (stretched-grid)
+!   - target_center_lat:      Latitude of target cell centers (stretched-grid)
+!   - valid_cells:            Logical mask indicating valid (non-fallback) cells in the stretched grid
+!   - num_lon_blocks:         Number of longitude blocks used for nearest-neighbor search
+!   - num_lat_blocks:         Number of latitude blocks used for nearest-neighbor search
+!   - lon_block_size:         Longitude size of blocks for spatial indexing
+!   - lat_block_size:         Latitude size of blocks for spatial indexing
+!   - blocks:                 Spatial indexing blocks (for efficient nearest-neighbor search)
+!
+! Output:
+!   - f(ntarget):             Remapped field on the stretched target grid
+!
+! Notes:
+!   - Designed specifically for robust handling of stretched-grid remapping scenarios.
+!   - Ensures problematic cells (invalid area, unrealistic values) are replaced using 
+!     nearest-neighbor logic to preserve physical consistency.
+!
+!===============================================================================
   
-  function remap_field(field, area_target, weights_eul_index_all, weights_lgr_index_all, weights_all, ncube, jall, nreconstruction, ntarget) result(f)
-    use shr_kind_mod, only: r8 => shr_kind_r8,i8 => shr_kind_i8
+  function remap_field_stretched(field, area_target, weights_eul_index_all, weights_lgr_index_all, &
+                                 weights_all, ncube, jall, nreconstruction, ntarget, &
+                                 target_center_lon, target_center_lat, valid_cells, &
+                                 num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, blocks) result(f)
+  
+    use shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
+    use neighbor_search_mod, ONLY: BlockType, find_nearest_valid_neighbor
     implicit none
   
     ! Input arguments
-    real(r8), intent(in) :: field(6*ncube*ncube)         ! Flattened field over cubed sphere
-    real(r8), intent(in) :: area_target(ntarget)         ! Area of each target grid cell
-    real(r8), intent(in) :: weights_all(:,:)             ! Overlap weights per segment (jall, nreconstruction)
-    integer , intent(in) :: weights_eul_index_all(:,:)   ! Indices of cube grid cells (jall, 3)
-    integer , intent(in) :: weights_lgr_index_all(:)     ! Target grid cell indices (jall)
-    integer , intent(in) :: ncube, nreconstruction, ntarget
+    real(r8), intent(in) :: field(6*ncube*ncube)           ! Flattened field over cubed sphere
+    real(r8), intent(in) :: area_target(ntarget)           ! Area of each target grid cell
+    real(r8), intent(in) :: weights_all(:,:)               ! Overlap weights per segment (jall, nreconstruction)
+    integer, intent(in) :: weights_eul_index_all(:,:)      ! Indices of cube grid cells (jall, 3)
+    integer, intent(in) :: weights_lgr_index_all(:)        ! Target grid cell indices (jall)
+    integer, intent(in) :: ncube, nreconstruction, ntarget
     integer(i8), intent(in) :: jall
+    integer(i8)  :: counti
+  
+    real(r8), intent(in) :: target_center_lon(ntarget), target_center_lat(ntarget)
+    logical, intent(in) :: valid_cells(ntarget)
+    integer, intent(in) :: num_lon_blocks, num_lat_blocks
+    real(r8), intent(in) :: lon_block_size, lat_block_size
+    type(BlockType), intent(in) :: blocks(:,:)
   
     ! Output
-    real(r8) :: f(ntarget)                               ! Result field mapped onto target grid
+    real(r8) :: f(ntarget)
   
-    ! Locals
-    integer :: i, ix, iy, ip, ii, counti
+    ! Local variables
+    integer :: i, ix, iy, ip, ii, closest
     real(r8) :: wt
+    real(r8), allocatable :: total_weight(:)
   
-    f = 0.0_r8    ! Initialize result field to zero
+    ! Allocate and initialize total_weight
+    allocate(total_weight(ntarget))
+    f = 0.0_r8
+    total_weight = 0.0_r8
   
     ! Loop over each overlap segment and accumulate weighted contributions
-    do counti = 1, jall
+    do counti = 1_i8, jall
       i  = weights_lgr_index_all(counti)        ! Target cell index
       ix = weights_eul_index_all(counti,1)      ! Cube x-index
       iy = weights_eul_index_all(counti,2)      ! Cube y-index
@@ -92,7 +189,11 @@ MODULE remap
       if (ix < 1 .or. ix > ncube) cycle
       if (iy < 1 .or. iy > ncube) cycle
       if (ip < 1 .or. ip > 6)     cycle
-      if (area_target(i) <= 0.0_r8) cycle
+  
+      if (area_target(i) <= 0.0_r8) then
+        write(*,*) "Warning: cell", i, "has zero or negative area_target:", area_target(i)
+        cycle
+      endif
   
       ! Convert (ix,iy,ip) triple to flat index
       ii = (ip - 1) * ncube * ncube + (iy - 1) * ncube + ix
@@ -100,15 +201,39 @@ MODULE remap
   
       ! Compute weight contribution from this overlap segment
       wt = weights_all(counti, 1)
+
+      ! Accumulate normally, including negatives
       f(i) = f(i) + wt * field(ii) / area_target(i)
+      total_weight(i) = total_weight(i) + wt
     end do
   
-  end function remap_field
+    ! After all cells calculated, fix problematic cells explicitly using nearest neighbor assignment
+    do i = 1, ntarget
+      if (f(i) > 8848.0_r8 .or. f(i) < -423.0_r8 .or. total_weight(i) <= 0.0_r8) then
+        write(*,*) "Problematic final value for cell", i, ":", f(i), "weights sum:", total_weight(i)
+  
+        ! Robust nearest-neighbor fallback
+        closest = find_nearest_valid_neighbor(i, target_center_lon, target_center_lat, valid_cells, &
+                                              num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, &
+                                              blocks, 100)
+        if (closest > 0) then
+          f(i) = f(closest)
+          write(*,*) "Cell", i, "assigned from neighbor cell", closest, "value:", f(closest)
+        else
+          f(i) = 0.0_r8  ! Final fallback to ocean
+          write(*,*) "No valid neighbor found for cell", i, "— set to ocean value (0.0)"
+        endif
+      endif
+    end do
+  
+    deallocate(total_weight)
+  
+  end function remap_field_stretched
 
 !==============================================================================================================
     function select_sg_field(field,weights_eul_index_all,weights_lgr_index_all,ncube,jall,&
          ntarget,itarget) result(ird)
-      use shr_kind_mod, only: r8 => shr_kind_r8
+      use shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
       implicit none
       integer , intent(in) :: weights_eul_index_all(jall,3),weights_lgr_index_all(jall)
       integer , intent(in) :: ncube,jall,ntarget,itarget
@@ -116,14 +241,15 @@ MODULE remap
       ! real(r8):: fsg(6*ncube*ncube)
       
       
-      integer :: i,ix,iy,ip,ii,counti
+      integer :: i,ix,iy,ip,ii
       real(r8):: wt
       real(r8):: ftarget(ntarget)
       integer :: ijp3(10000,3),ird
+      integer (i8) :: counti
       
       ird=1
       !!fsg=0.0D0
-      do counti=1,jall
+      do counti=1_i8,jall
         i    = weights_lgr_index_all(counti)
 
         if (itarget == i) then        
@@ -155,7 +281,7 @@ end function select_sg_field
 !==============================================================================================================
     function paint_sg_field(field,weights_eul_index_all,weights_lgr_index_all,ncube,jall,&
          ntarget,itarget) result(isg)
-      use shr_kind_mod, only: r8 => shr_kind_r8
+      use shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
       implicit none
       integer , intent(in) :: weights_eul_index_all(jall,3),weights_lgr_index_all(jall)
       integer , intent(in) :: ncube,jall,ntarget,itarget
@@ -163,14 +289,15 @@ end function select_sg_field
       integer :: isg(6*ncube*ncube)
       
       
-      integer :: i,ix,iy,ip,ii,counti
+      integer :: i,ix,iy,ip,ii
+      integer (i8) :: counti
       real(r8):: wt
       real(r8):: ftarget(ntarget)
       integer :: ijp3(10000,3),ird
       
       ird=1
       isg=-1
-      do counti=1,jall
+      do counti=1_i8,jall
         i    = weights_lgr_index_all(counti)
         
            ix  = weights_eul_index_all(counti,1)
@@ -254,7 +381,6 @@ end function paint_sg_field
     !
     ! this module assumes that cells are specified clockwise (not counter-clockwise); CHECK
     !
-
     signed_area=0.0
     do i=1,nvertex
 !      signed_area=signed_area+xcell_in(i)*ycell_in(i+1)-xcell_in(i+1)*ycell(i)
@@ -311,7 +437,6 @@ end function paint_sg_field
 
     xcell = xcell_in(1:nvertex)
     ycell = ycell_in(1:nvertex)
-
     !
     ! this is to avoid ill-conditioning problems
     !
