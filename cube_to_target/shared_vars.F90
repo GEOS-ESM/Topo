@@ -329,7 +329,7 @@ subroutine read_target_grid(grid_descriptor_fname,lregional_refinement,ltarget_l
   integer :: ncid,status
   integer :: ntarget_id, ncorner_id, nrank_id, nodeCount_id,nodeCoords_id,elementConn_id,numElementConn_id,centerCoords_id
   integer :: alloc_error
-  integer :: lonid, latid,nodeCount
+  integer :: lonid, latid,nodeCount, i
 
   real(r8), allocatable, dimension(:,:):: centerCoords,nodeCoords
   integer,  allocatable, dimension(:,:):: elementConn
@@ -563,9 +563,21 @@ subroutine read_target_grid(grid_descriptor_fname,lregional_refinement,ltarget_l
   status = NF_INQ_VARID(ncid, TRIM(str_area(esmf_file)), latid)
   IF (status /= NF_NOERR) CALL HANDLE_ERR(status)
   status = NF_GET_VAR_DOUBLE(ncid, latid,target_area)
+
   ! After reading target_area
   write(*,*) "target_area min/max after reading:", &
-            minval(target_area), maxval(target_area)
+             minval(target_area), maxval(target_area)
+  
+  ! Safeguard against invalid (negative or zero) areas
+  do i = 1, size(target_area)
+      if (target_area(i) <= 0.0_r8) then
+          target_area(i) = 1e-12_r8
+      endif
+  end do
+  
+  ! Confirm safeguard worked
+  write(*,*) "target_area min/max after safeguard:", &
+             minval(target_area), maxval(target_area)
 
   IF (status /= NF_NOERR) CALL HANDLE_ERR(status)
 

@@ -1296,15 +1296,23 @@ program convterr
     !********************************************************************
     
     !
-    ! Sum exchange grid cells within each target
-    ! grid cell
+    ! Sum exchange grid cells within each target grid cell
     !
     area_target = 0.0_r8  ! explicitly zero at start
     do counti=1_i8,jall
       i    = weights_lgr_index_all(counti)
       wt = weights_all(counti,1)
-      area_target(i) = max(area_target(i) + wt, 1e-12_r8)
+      area_target(i) = area_target(i) + wt
     end do
+
+    ! Explicit safeguard against tiny or negative areas, stretch and regular fine grid suffer 
+    ! from grid distortions even though geometry (vortex ordering) is correct. 
+    do i = 1, ntarget
+        if (area_target(i) < 1e-12_r8) then
+            area_target(i) = 1e-12_r8
+        endif
+    end do  
+
     write(*,*) "MIN/MAX area_target",MINVAL(area_target),MAXVAl(area_target)
     write(*,*) "MIN/MAX target_area",MINVAL(target_area),MAXVAl(target_area)
     
@@ -1457,6 +1465,7 @@ program convterr
          area_target_total = area_target_total + area_target(i)
          vol_target_un     = vol_target_un + terr_target(i) * area_target(i)
      end do
+         area_target_total = max(area_target_total, 1e-12_r8)
      write(*,*) "Global mean elevation (unfiltered):", &
                  vol_target_un / area_target_total, " Total volume:", &
                  vol_target_un, " Total area:", area_target_total
@@ -1744,6 +1753,13 @@ program convterr
           wt = weights_all(counti,1)
           area_target        (i) = area_target(i) + wt
         end do
+
+        ! Explicit safeguard against tiny or negative areas
+        do i = 1, ntarget
+            if (area_target(i) < 1e-12_r8) then
+                area_target(i) = 1e-12_r8
+            endif
+        end do        
         
         write(*,*) "Remapping terrain"
         
