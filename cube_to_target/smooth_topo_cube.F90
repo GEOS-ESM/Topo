@@ -338,6 +338,10 @@ CONTAINS
             terr_sm  = terr
             dt       = 16.0_r8 / REAL(smooth_phis_numcycle, r8)
          
+      smooth_phis_cycle: block
+      integer(kind=8) :: tclock1, tclock2, clock_rate
+      real(kind=8) :: elapsed_time
+      call system_clock(tclock1)
             do iter = 1, smooth_phis_numcycle
                call progress_bar("# ", iter, 100.0_r8*iter/smooth_phis_numcycle)
                call laplacian(terr_sm, ncube, lap, landfrac_local, lsmoothing_over_ocean)
@@ -349,6 +353,10 @@ CONTAINS
                   stop
                end if
             end do
+      call system_clock(tclock2, clock_rate)
+      elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+      print *, 'Elapsed time smooth_phis_cycle smooth_topo_cube = ', elapsed_time, ' seconds.'
+      end block smooth_phis_cycle
          
          else
             !––– SCHMIDT-STRETCHED SMOOTHER –––––––––––––––––––––––––––
@@ -566,6 +574,9 @@ CONTAINS
     !
     ! remember to use inverse metric!
     !
+!$omp parallel do default(none) &
+!$omp shared(ncube,piq,da,sqgg,ggaa,ggab,ggba,ggbb) &
+!$omp private(i,j,alph,beta,irhosq,irho,factor,aa,dd,bb,cc,det)
     DO j=0,ncube+1
       DO i=0,ncube+1
         alph = -piq+(DBLE(i)-0.5)*da
@@ -595,6 +606,9 @@ CONTAINS
     !
     ! Same as above but for edge of cells
     !
+!$omp parallel do default(none) &
+!$omp shared(ncube,piq,da,sqgg_e,ggaa_e,ggab_e,ggba_e,ggbb_e) &
+!$omp private(i,j,alph,beta,irhosq,irho,factor,aa,dd,bb,cc,det)
     DO j=0,ncube+1
       DO i=0,ncube+1
         alph = -piq+DBLE((i-1))*da
@@ -622,6 +636,8 @@ CONTAINS
       END DO
     END DO
 
+!$omp parallel do default(none) &
+!$omp private(ip) shared(terr,terr_halo,ncube)
     do ip=1,6
       call CubedSphereFillHalo_Cubic(terr, terr_halo, ip, ncube+1)
     end do
@@ -634,6 +650,10 @@ CONTAINS
     ! Nair, MWR, 2009
     !
     do ip=1,6
+!$omp parallel do default(none) &
+!$omp shared(ip,lap,landfrac_local,terr_halo,sqgg_e, &
+!$omp ggaa_e,ggbb_e,ggab,ggba,inv_da,sqgg,ncube) &
+!$omp private(i,j,lap_x,lap_xy,lap_y,lap_yx) 
       do j=1,ncube
         do i=1,ncube
           if (landfrac_local(i,j,ip) > 0.0_r8) then

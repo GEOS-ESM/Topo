@@ -1269,16 +1269,12 @@ program convterr
     if(lfind_ridges) then
       nsw = nwindow_halfwidth
       nhalo=2*nsw
-      
       call find_local_maxes ( terr_dev, ncube, nhalo, nsw, iopt_ridge_seed, &
                               lregional_refinement, rrfac )
-
-
       call find_ridges ( terr_dev, terr, ncube, nhalo, nsw,&
            ncube_sph_smooth_coarse   , ncube_sph_smooth_fine,   &
            ldevelopment_diags, lregional_refinement=lregional_refinement,&
            rr_factor = rrfac  )
-
     endif
     
     !*********************************************************

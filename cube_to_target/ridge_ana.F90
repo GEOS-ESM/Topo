@@ -462,6 +462,16 @@ write(*,*) " SHAPE ", shape( peaks%i )
 
    call alloc_ridge_qs(npeaks, NSW, lregional_refinement)
  
+   anisotropy_analysis: block
+   integer(kind=8) :: tclock1, tclock2, clock_rate
+   real(kind=8) :: elapsed_time
+   call system_clock(tclock1)
+!$omp parallel do default(none) &
+!$omp private(ipk,i,j,np,nswx,suba,subarw,subx,suby,ispk,jspk, &
+!$omp subrot) shared(npeaks,peaks,MyPanel,nsw,rdtg,do_refine, &
+!$omp rr_factor,RefFac,NSWx_diag,lregional_refinement,ncube, &
+!$omp nhalo,terr_dev_halo_r4,terr_halo_r4,xv,yv,xspk,yspk, &
+!$omp rdg_profiles_x,mxdis)
    do ipk = 1,npeaks
         i  = peaks(ipk)%i
         j  = peaks(ipk)%j
@@ -523,6 +533,10 @@ write(*,*) " SHAPE ", shape( peaks%i )
         write(*,903,advance='no') achar(13) , ipk, npeaks,nswx , mxdis(ipk)
  
    end do
+   call system_clock(tclock2, clock_rate)
+   elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+   print *, 'Elapsed time anisotropy analysis = ', elapsed_time, ' seconds.'
+   end block anisotropy_analysis
 
     write(*,*)
 
@@ -2260,6 +2274,10 @@ write(*,*) " in fleshout_block "
 !================================
   axc = 0.
 
+  fleshout_bloc: block
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
   do ip=1,6
   do j=1,ncube
   do i=1,ncube
@@ -2294,6 +2312,10 @@ write(*,*) " in fleshout_block "
   end do
   write(*,*)" finished panel=",ip
   end do
+  call system_clock(tclock2, clock_rate)
+  elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+  print *, 'Elapsed time fleshout block = ', elapsed_time, ' seconds.'
+  end block fleshout_bloc
 
 end function fleshout_block
 !======================================
@@ -2322,7 +2344,15 @@ function fleshout_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x ) 
 !================================
   axc  =  0.
 
+  fleshout_prof: block
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
   do ip=1,6
+!$omp parallel do default(none) &
+!$omp shared(ncube,mxdisC,rrfac,uniqidC,shape_x,AXC,ip,nsw,anglxC, &
+!$omp psw,nhalo) &
+!$omp private(i,j,nswx,ipk,suba,subr,jw,rotangl,subdis,ii,jj,x0,y0)
   do j=1,ncube
   do i=1,ncube
      if(mxdisC(i,j,ip)>=1.0) then
@@ -2360,6 +2390,10 @@ function fleshout_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x ) 
   end do
   write(*,*)" finished panel=",ip
   end do
+  call system_clock(tclock2, clock_rate)
+  elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+  print *, 'Elapsed time fleshout profi = ', elapsed_time, ' seconds.'
+  end block fleshout_prof
 
 end function fleshout_profi
 
@@ -2392,6 +2426,10 @@ function color_on_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x,co
 !================================
   axc  =  0.
 
+  color_profi: block
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
   do ip=1,6
   do j=1,ncube
   do i=1,ncube
@@ -2440,6 +2478,10 @@ function color_on_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x,co
   end do
   write(*,*)" finished panel=",ip
   end do
+  call system_clock(tclock2, clock_rate)
+  elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+  print *, 'Elapsed time color on profi = ', elapsed_time, ' seconds.'
+  end block color_profi
 
 end function color_on_profi
 
@@ -2561,7 +2603,17 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
 !  is selected based the closeness of the feature center (xs,ys) to
 !  its diagnosed peak-ridgecrest location (xspk,yspk)
 !=======================================================================
-  do ipk=1,npeaks
+   paintridge2cub: block
+   integer(kind=8) :: tclock1, tclock2, clock_rate
+   real(kind=8) :: elapsed_time
+   call system_clock(tclock1)
+!!!$omp parallel do ordered default(none)  &
+!!!$omp private(ipk,suba,ncl,rotangl,subr,subdis,NSWx,dsq,jj,ii,ip, &
+!!!$omp x0,y0,subq,nhw,jw,subblk0,subblk,sub1) &
+!!!$omp shared(npeaks,mxdis,Lcrestwt,clngth,nsw, &
+!!!$omp Lcrestln,anglx,axr,allpixels,xs,ys,xspk,yspk, &
+!!!$omp nhalo,ncube,QC,AXC,hwdth,sub11,RefFac,peaks)
+   do ipk=1,npeaks
         if(mxdis(ipk)>=1.0) then
  
             if(Lcrestwt) then
@@ -2693,10 +2745,14 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
              end do
              end do
              end if
-          end if
-      end do
+        end if
+   end do
+   call system_clock(tclock2, clock_rate)
+   elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+   print *, 'Elapsed time paintridge2cube = ', elapsed_time, ' seconds.'
+   end block paintridge2cub
 
-     write(*,*) " finished paintridge2cube "
+  write(*,*) " finished paintridge2cube "
      
   end function paintridge2cube
  !==================================================================

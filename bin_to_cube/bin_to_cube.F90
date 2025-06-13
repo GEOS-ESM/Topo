@@ -85,6 +85,9 @@ program convterr
   INTEGER :: UNIT
 
   character(len=1024) :: raw_latlon_data_file,output_file
+  integer(kind=8) :: tclock1_g, tclock2_g, clock_rate_g
+  real(kind=8) :: elapsed_time_g
+  call system_clock(tclock1_g)
   
   namelist /binparams/ &
        raw_latlon_data_file,output_file,ncube
@@ -155,9 +158,17 @@ program convterr
   status = NF_INQ_VARID(ncid, 'htopo', topoid)
   IF (status .NE. NF_NOERR) CALL HANDLE_ERR(status)
   
+  read_terrain_data: block
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
   WRITE(*,*) "read terrain data"
   status = NF_GET_VAR_INT2(ncid, topoid,terr)
   IF (status .NE. NF_NOERR) CALL HANDLE_ERR(status)
+  call system_clock(tclock2, clock_rate)
+  elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+  print *, 'Elapsed time read terrain data in bin_to_cube = ', elapsed_time, ' seconds.'
+  end block read_terrain_data
   
   status = NF_INQ_VARID(ncid, 'lon', lonid)
   IF (status .NE. NF_NOERR) CALL HANDLE_ERR(status)
@@ -333,6 +344,14 @@ program convterr
 !    END DO
 !  END DO
 
+  block1: block
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
+!!!$omp parallel do default(none) &
+!!!$omp private(j,i,alpha,beta,ipanel,icube,jcube,wt) &
+!!!$omp shared(jm,im,ncube,dlat,lon,lat,da,terr,landfrac,idx,idy,idp) &
+!!!$omp reduction(+:weight,terr_cube,landfrac_cube)
   DO j=1,jm
     DO i=1,im
 !      WRITE(*,ADVANCE = "NO") "bin to cube ",100.0*FLOAT(i+(j-1)*im)/FLOAT(im*jm),"% done"
@@ -359,6 +378,10 @@ program convterr
       idp(i,j) = ipanel
     END DO
   END DO
+  call system_clock(tclock2, clock_rate)
+  elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+  print *, 'Elapsed time block1 in bin_to_cube = ', elapsed_time, ' seconds.'
+  end block block1
   
 
   dx = deg2rad*(lon_landm(2)-lon_landm(1))
@@ -514,6 +537,9 @@ program convterr
   !DEALLOCATE(weight,terr,idx,idy,idp,lat,lon)
 !---ARH
   WRITE(*,*) "done writing cubed sphere data"
+  call system_clock(tclock2_g, clock_rate_g)
+  elapsed_time_g = real(tclock2_g - tclock1_g, kind=8) / real(clock_rate_g, kind=8)
+  print *, 'Elapsed time global in bin_to_cube = ', elapsed_time_g, ' seconds.'
 end program convterr
 
 
