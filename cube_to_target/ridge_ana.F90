@@ -2607,12 +2607,12 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
    integer(kind=8) :: tclock1, tclock2, clock_rate
    real(kind=8) :: elapsed_time
    call system_clock(tclock1)
-!!!$omp parallel do ordered default(none)  &
-!!!$omp private(ipk,suba,ncl,rotangl,subr,subdis,NSWx,dsq,jj,ii,ip, &
-!!!$omp x0,y0,subq,nhw,jw,subblk0,subblk,sub1) &
-!!!$omp shared(npeaks,mxdis,Lcrestwt,clngth,nsw, &
-!!!$omp Lcrestln,anglx,axr,allpixels,xs,ys,xspk,yspk, &
-!!!$omp nhalo,ncube,QC,AXC,hwdth,sub11,RefFac,peaks)
+!$omp parallel do ordered default(none)  &
+!$omp private(ipk,suba,ncl,rotangl,subr,subdis,NSWx,dsq,jj,ii,ip, &
+!$omp x0,y0,subq,nhw,jw,subblk0,subblk,sub1) &
+!$omp shared(npeaks,mxdis,Lcrestwt,clngth,nsw, &
+!$omp Lcrestln,anglx,axr,allpixels,xs,ys,xspk,yspk, &
+!$omp nhalo,ncube,QC,AXC,hwdth,sub11,RefFac,peaks)
    do ipk=1,npeaks
         if(mxdis(ipk)>=1.0) then
  
@@ -2673,9 +2673,13 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 y0 = INT( yspk(ipk) ) + 1  ! original, original has +1
                 !x0 = INT( xspk(ipk) )      ! why do we need +1 
                 !y0 = INT( yspk(ipk) )
-                if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
-                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
-                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  QC( x0+ii, y0+jj, ip )  = subq(ii,jj)
+                if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
+                      !$OMP CRITICAL
+                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  then 
+                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                          QC( x0+ii, y0+jj, ip )  = subq(ii,jj)
+                      endif
+                      !$OMP END CRITICAL
                 endif
              end do
              end do
@@ -2724,9 +2728,13 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 !y0 = INT( yspk(ipk) )  
                 x0 = NINT( 1.*xspk(ipk) )      ! do we need +1 
                 y0 = NINT( 1.*yspk(ipk) )  
-                if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
-                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
-                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))   QC( x0+ii, y0+jj, ip ) = subblk(ii,jj)
+                if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
+                      !$OMP CRITICAL
+                      if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip )) then
+                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                          QC( x0+ii, y0+jj, ip ) = subblk(ii,jj)
+                      endif
+                      !$OMP END CRITICAL
                  endif
              end do
              end do
@@ -2739,8 +2747,12 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 ip = peaks(ipk)%ip
                 x0 = INT( xspk(ipk) )
                 y0 = INT( yspk(ipk) )
-                if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
-                       if (subdis(ii,jj) >= AXC( x0+ii, y0+jj, ip ))  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
+                      !$OMP CRITICAL
+                      if (subdis(ii,jj) >= AXC( x0+ii, y0+jj, ip )) then
+                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                      endif
+                      !$OMP END CRITICAL
                  endif
              end do
              end do
