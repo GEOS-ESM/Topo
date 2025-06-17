@@ -1356,7 +1356,7 @@ program convterr
     write(*,*) "Remapping SGH30"
     sgh30_target = remap_field(var30,area_target,weights_eul_index_all(1:jall,:),weights_lgr_index_all(1:jall),&
          weights_all(1:jall,:),ncube,jall,nreconstruction,ntarget)
-    write(*,*) "MIN/MAX:", MINVAL((sgh30_target)), MAXVAL(sqrt(sgh30_target))
+    write(*,*) "MIN/MAX:", MINVAL(sgh30_target), MAXVAL(sgh30_target)
     deallocate(var30)
     deallocate(landm_coslat)
     
