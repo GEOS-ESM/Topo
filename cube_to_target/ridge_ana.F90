@@ -2284,7 +2284,7 @@ write(*,*) " in fleshout_block "
                 do ii = -NSWx/2,NSWx/2
                     x0 = i ! INT( xspk(ipk) ) + 1
                     y0 = j ! INT( yspk(ipk) ) + 1
-                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
+                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
                        if ( subdis(ii,jj) >=  AXC( x0+ii, y0+jj, ip ) )  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
                     end if
                 end do
@@ -2346,7 +2346,7 @@ function fleshout_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x ) 
                 do ii = -NSWx/2,NSWx/2
                     x0 = i ! INT( xspk(ipk) ) + 1
                     y0 = j ! INT( yspk(ipk) ) + 1
-                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
+                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
                        if ( (subdis(ii,jj) <= 0.).and. (AXC( x0+ii, y0+jj, ip )<=0. ) ) then
                           if ( subdis(ii,jj) <=  AXC( x0+ii, y0+jj, ip ) )  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
                        else
@@ -2420,7 +2420,7 @@ function color_on_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x,co
                 do ii = -NSWx/2,NSWx/2
                     x0 = i ! INT( xspk(ipk) ) + 1
                     y0 = j ! INT( yspk(ipk) ) + 1
-                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
+                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
                        if ( (subdis(ii,jj) <= 0.).and. (AXC( x0+ii, y0+jj, ip )<=0. ) ) then
                           if ( subdis(ii,jj) <=  AXC( x0+ii, y0+jj, ip ) ) then
                              AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
