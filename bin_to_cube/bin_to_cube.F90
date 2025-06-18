@@ -353,6 +353,7 @@ program convterr
 !!!$omp shared(jm,im,ncube,dlat,lon,lat,da,terr,landfrac,idx,idy,idp) &
 !!!$omp reduction(+:weight,terr_cube,landfrac_cube)
   DO j=1,jm
+    wt    = SIN( lat(j)+0.5*dlat ) - SIN( lat(j)-0.5*dlat )
     DO i=1,im
 !      WRITE(*,ADVANCE = "NO") "bin to cube ",100.0*FLOAT(i+(j-1)*im)/FLOAT(im*jm),"% done"
       call CubedSphereABPFromRLL(lon(i), lat(j), alpha, beta, ipanel)            
@@ -363,7 +364,6 @@ program convterr
         WRITE(*,*) "icube or jcube out of range: ",icube,jcube
         STOP
       END IF
-      wt    = SIN( lat(j)+0.5*dlat ) - SIN( lat(j)-0.5*dlat )
       weight(icube,jcube,ipanel) = weight(icube,jcube,ipanel)+wt
       !
       terr_cube    (icube,jcube,ipanel)     = terr_cube    (icube,jcube,ipanel)+wt*DBLE(terr(i,j))

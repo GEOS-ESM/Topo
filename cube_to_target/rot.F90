@@ -263,9 +263,11 @@ end FUNCTION ROTBY3
   REAL(RPX)                           ::  AR(0:N-1,0:N-1)
 
   real(rpx) :: x(0:n-1),y(0:n-1)
-  real(rpx) :: xp(0:n-1,0:n-1),yp(0:n-1,0:n-1)
+  !real(rpx) :: xp(0:n-1,0:n-1),yp(0:n-1,0:n-1)
+  real(rpx) :: xp,yp
   real(rpx) :: r(0:n-1,0:n-1),wt(0:n-1,0:n-1)
   real(rpx) :: THETRAD,PI,swt
+  real(rpx) :: thetacos, thetasin
   integer :: i,j,l,m,n2,ii,jj,i1,j1,r00,r10,r01,r11,ic,d00
   integer :: ir,jr
 
@@ -285,22 +287,18 @@ end FUNCTION ROTBY3
      y(i)=-n2+i*1.
   end do
 
-  do j=0,n-1
-  do i=0,n-1
-     xp(i,j)=x(i)*cos(thetrad) - y(j)*sin(thetrad)
-     yp(i,j)=y(j)*cos(thetrad) + x(i)*sin(thetrad)
-  end do
-  end do
+  thetacos = cos(thetrad)
+  thetasin = sin(thetrad)
 
+  ar=-9999999.9
   do j=0,n-1
   do i=0,n-1
-     if ( (xp(i,j)<x(0)).or.(xp(i,j)>x(n-1)).or.(yp(i,j)<y(0)).or.(yp(i,j)>y(n-1)) ) then
-        ar(i,j)=-9999999.9
-     else
-     ir = NINT( xp(i,j) + n2 )
-     jr = NINT( yp(i,j) + n2 )
-          ar(i,j) = aa(ir,jr)
-     endif
+     xp=x(i)*thetacos - y(j)*thetasin
+     yp=y(j)*thetacos + x(i)*thetasin
+     if ( (xp<x(0)).or.(xp>x(n-1)).or.(yp<y(0)).or.(yp>y(n-1)) ) cycle
+     ir = NINT( xp + n2 )
+     jr = NINT( yp + n2 )
+     ar(i,j) = aa(ir,jr)
   end do
   end do
 
