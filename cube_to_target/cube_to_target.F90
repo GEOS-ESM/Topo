@@ -532,6 +532,10 @@ program convterr
   integer :: icorner, icell
   integer :: iblock, jblock
 
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
+
 
   !               
   !                     long name                   has     | short | specified    | required
@@ -1792,6 +1796,11 @@ program convterr
       CALL wrtncdf_unstructured_append_phis(ntarget,terr_target, &
            target_center_lon,target_center_lat,output_fname)
     end if
+
+   call system_clock(tclock2, clock_rate)
+   elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+   print *, 'Elapsed time program convterr = ', elapsed_time, ' seconds.'
+
     end program convterr
 
    subroutine print_help

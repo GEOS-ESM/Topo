@@ -2613,7 +2613,7 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
 !!$omp shared(npeaks,mxdis,Lcrestwt,clngth,nsw, &
 !!$omp Lcrestln,anglx,axr,allpixels,xs,ys,xspk,yspk, &
 !!$omp nhalo,ncube,QC,AXC,hwdth,sub11,RefFac,peaks)
-   do ipk=1,npeaks
+  do ipk=1,npeaks
         if(mxdis(ipk)>=1.0) then
  
             if(Lcrestwt) then
@@ -2674,12 +2674,8 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 !x0 = INT( xspk(ipk) )      ! why do we need +1 
                 !y0 = INT( yspk(ipk) )
                 if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
-                      !$OMP CRITICAL
-                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  then 
-                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
-                          QC( x0+ii, y0+jj, ip )  = subq(ii,jj)
-                      endif
-                      !$OMP END CRITICAL
+                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  QC( x0+ii, y0+jj, ip )  = subq(ii,jj)
                 endif
              end do
              end do
@@ -2729,12 +2725,8 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 x0 = NINT( 1.*xspk(ipk) )      ! do we need +1 
                 y0 = NINT( 1.*yspk(ipk) )  
                 if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
-                      !$OMP CRITICAL
-                      if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip )) then
-                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
-                          QC( x0+ii, y0+jj, ip ) = subblk(ii,jj)
-                      endif
-                      !$OMP END CRITICAL
+                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))   QC( x0+ii, y0+jj, ip ) = subblk(ii,jj)
                  endif
              end do
              end do
@@ -2748,17 +2740,13 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 x0 = INT( xspk(ipk) )
                 y0 = INT( yspk(ipk) )
                 if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
-                      !$OMP CRITICAL
-                      if (subdis(ii,jj) >= AXC( x0+ii, y0+jj, ip )) then
-                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
-                      endif
-                      !$OMP END CRITICAL
+                       if (subdis(ii,jj) >= AXC( x0+ii, y0+jj, ip ))  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
                  endif
              end do
              end do
              end if
-        end if
-   end do
+          end if
+      end do
    call system_clock(tclock2, clock_rate)
    elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
    print *, 'Elapsed time paintridge2cube = ', elapsed_time, ' seconds.'

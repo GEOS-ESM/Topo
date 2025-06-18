@@ -269,6 +269,11 @@ end FUNCTION ROTBY3
   integer :: i,j,l,m,n2,ii,jj,i1,j1,r00,r10,r01,r11,ic,d00
   integer :: ir,jr
 
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8), save :: elapsed_time = 0.d0
+
+  call system_clock(tclock1)
+
   PI = 2*ACOS(0.0)
   THETRAD = -theta*(PI/180.)
 
@@ -298,6 +303,10 @@ end FUNCTION ROTBY3
      endif
   end do
   end do
+
+  call system_clock(tclock2, clock_rate)
+  elapsed_time = elapsed_time + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+  print *, 'ROTBY4 = ', elapsed_time, ' seconds.'
 
 end FUNCTION ROTBY4
 
