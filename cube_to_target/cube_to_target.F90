@@ -257,6 +257,7 @@ CONTAINS
              closest = find_nearest_valid_neighbor(i, target_center_lon, target_center_lat, valid_cells, &
                                                    num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, &
                                                    blocks, 10)
+             write(100,*) i, target_center_lon(i), target_center_lat(i), closest
          
              if (closest > 0) then
                  if (.not.allocated(weights_all) .or. SIZE(weights_all,1) < jall + 1) then
