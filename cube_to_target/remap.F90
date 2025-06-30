@@ -216,6 +216,7 @@ end function remap_field
         closest = find_nearest_valid_neighbor(i, target_center_lon, target_center_lat, valid_cells, &
                                               num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, &
                                               blocks, 100)
+        write(400,*) i, target_center_lon(i), target_center_lat(i), closest
         if (closest > 0) then
           f(i) = f(closest)
           write(*,*) "Cell", i, "assigned from neighbor cell", closest, "value:", f(closest)

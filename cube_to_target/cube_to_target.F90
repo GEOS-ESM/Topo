@@ -808,6 +808,7 @@ program convterr
               closest = find_nearest_valid_neighbor(icell, target_center_lon, target_center_lat, valid_cells, &
                                                     num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, &
                                                     blocks, 100)
+             write(200,*) i, target_center_lon(i), target_center_lat(i), closest
       
               if (closest > 0) then
                   target_corner_lon(:, icell) = target_corner_lon(:, closest)
@@ -1126,7 +1127,7 @@ program convterr
                      nreconstruction,ldbg,target_center_lon,target_center_lat,area_target,valid_cells,&
                      num_lon_blocks,num_lat_blocks,lon_block_size,lat_block_size,blocks)
   
-     write(*,*) "DEBUG: Finished overlap_weights subroutine call"   
+     write(*,*) "DEBUG 1: Finished overlap_weights subroutine call"   
 
      deallocate(target_corner_lon,target_corner_lat)
    end if
@@ -1398,6 +1399,7 @@ program convterr
                  closest = find_nearest_valid_neighbor(icell, target_center_lon, target_center_lat, valid_cells, &
                                                        num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, &
                                                        blocks, 10)
+             write(300,*) i, target_center_lon(i), target_center_lat(i), closest
                  if (closest > 0) then
                      ! Check validity of neighbor terrain height
                      if (terr_target(closest) > 8848.0d0 .or. terr_target(closest) < -423.0d0) then
@@ -1743,6 +1745,7 @@ program convterr
                      jall,ncube,ngauss,ntarget,ncorner,jmax_segments,target_corner_lon,target_corner_lat,&
                      nreconstruction,ldbg,target_center_lon,target_center_lat,area_target,valid_cells,&
                      num_lon_blocks,num_lat_blocks,lon_block_size,lat_block_size,blocks)
+     write(*,*) "DEBUG 2: Finished overlap_weights subroutine call"   
         
         allocate (area_target(ntarget))
         
