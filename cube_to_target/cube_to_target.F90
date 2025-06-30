@@ -139,6 +139,10 @@ CONTAINS
 
     DO i=1,ntarget
 
+      block
+      integer(kind=8) :: tclock1, tclock2, clock_rate
+      real(kind=8), save :: elapsed_time_target = 0.d0
+      call system_clock(tclock1)
 
       !if (MOD(i,10)==0)call progress_bar("# ", i, DBLE(100*i)/DBLE(ntarget))  !commented out b/c log to large
       !
@@ -309,6 +313,12 @@ CONTAINS
         jall = jall + jcollect
 
       END DO
+
+      call system_clock(tclock2, clock_rate)
+      elapsed_time_target = elapsed_time_target + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+       if (mod(i,100000) == 0) print '(a, i12, e16.6)', 'Elapsed time target = ', i, elapsed_time_target
+      end block
+
     END DO
 
     !====================================================================
@@ -533,6 +543,9 @@ program convterr
   integer :: icorner, icell
   integer :: iblock, jblock
 
+   integer(kind=8) :: tclock1, tclock2, clock_rate
+   real(kind=8) :: elapsed_time
+   call system_clock(tclock1)
 
   !               
   !                     long name                   has     | short | specified    | required
@@ -1798,6 +1811,11 @@ program convterr
       CALL wrtncdf_unstructured_append_phis(ntarget,terr_target, &
            target_center_lon,target_center_lat,output_fname)
     end if
+
+    call system_clock(tclock2, clock_rate)
+    elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+    print *, 'Elapsed time program convterr = ', elapsed_time, ' seconds.'
+
     end program convterr
 
    subroutine print_help
