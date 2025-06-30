@@ -348,10 +348,6 @@ program convterr
   integer(kind=8) :: tclock1, tclock2, clock_rate
   real(kind=8) :: elapsed_time
   call system_clock(tclock1)
-!!!$omp parallel do default(none) &
-!!!$omp private(j,i,alpha,beta,ipanel,icube,jcube,wt) &
-!!!$omp shared(jm,im,ncube,dlat,lon,lat,da,terr,landfrac,idx,idy,idp) &
-!!!$omp reduction(+:weight,terr_cube,landfrac_cube)
   DO j=1,jm
     wt    = SIN( lat(j)+0.5*dlat ) - SIN( lat(j)-0.5*dlat )
     DO i=1,im

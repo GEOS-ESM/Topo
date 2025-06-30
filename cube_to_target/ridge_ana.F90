@@ -2279,6 +2279,10 @@ write(*,*) " in fleshout_block "
   real(kind=8) :: elapsed_time
   call system_clock(tclock1)
   do ip=1,6
+!$omp parallel do default(none) &
+!$omp shared(ncube,mxdisC,rrfac,AXC,ip,nsw,anglxC, &
+!$omp nhalo, hwdthC) &
+!$omp private(i,j,nswx,ipk,suba,subr,nhw,jw,rotangl,subdis,ii,jj,x0,y0)
   do j=1,ncube
   do i=1,ncube
      if(mxdisC(i,j,ip)>=1.0) then
@@ -2431,6 +2435,10 @@ function color_on_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x,co
   real(kind=8) :: elapsed_time
   call system_clock(tclock1)
   do ip=1,6
+!$omp parallel do default(none) &
+!$omp shared(ncube,mxdisC,rrfac,uniqidC,shape_x,AXC,BXC,ip,nsw,anglxC, &
+!$omp psw,nhalo, colors) &
+!$omp private(i,j,nswx,ipk,suba,subr,jw,rotangl,subdis,ii,jj,x0,y0, subcolo)
   do j=1,ncube
   do i=1,ncube
      if(mxdisC(i,j,ip)>=1.0) then
@@ -2607,34 +2615,30 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
    integer(kind=8) :: tclock1, tclock2, clock_rate
    real(kind=8) :: elapsed_time
    call system_clock(tclock1)
-!!$omp parallel do ordered default(none)  &
-!!$omp private(ipk,suba,ncl,rotangl,subr,subdis,NSWx,dsq,jj,ii,ip, &
-!!$omp x0,y0,subq,nhw,jw,subblk0,subblk,sub1) &
-!!$omp shared(npeaks,mxdis,Lcrestwt,clngth,nsw, &
-!!$omp Lcrestln,anglx,axr,allpixels,xs,ys,xspk,yspk, &
-!!$omp nhalo,ncube,QC,AXC,hwdth,sub11,RefFac,peaks)
   do ipk=1,npeaks
         if(mxdis(ipk)>=1.0) then
  
+            rotangl = - anglx(ipk) 
+
             if(Lcrestwt) then
                suba(:,:) = 0.
                ncl  = MIN( INT(clngth(ipk)/2) , nsw/2 )
                suba( 0 , -ncl:ncl ) = 1.        
-               rotangl = - anglx(ipk) 
+               !rotangl = - anglx(ipk) 
                subr = rotbyx( suba , 2*nsw+1, rotangl )
                subdis = subr 
              else if(Lcrestln) then
                suba(:,:) = 0.
                ncl  = MIN( INT(clngth(ipk)/2) , nsw/2 )
                suba( 0 , -ncl:ncl ) = 1.        
-               rotangl = - anglx(ipk) 
+               !rotangl = - anglx(ipk) 
                subr = rotbyx( suba , 2*nsw+1, rotangl )
                subdis = subr * axr(ipk)
              else            
                suba(:,:) = 0.
                ncl  = MIN( INT(clngth(ipk)/2) , nsw/2 )
                suba( 0 , -ncl:ncl ) = 1.        
-               rotangl = - anglx(ipk) 
+               !rotangl = - anglx(ipk) 
                subr = rotbyx( suba , 2*nsw+1, rotangl )
                subdis =  subr * axr(ipk)
              end if
@@ -2642,7 +2646,7 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
 
 #ifdef ROTATEBRUSH
              ! rotated "brush"
-             rotangl = - anglx(ipk) 
+             !rotangl = - anglx(ipk) 
              sub1 = rotbyx( sub11 , 2*nsw+1, rotangl )
 #endif
 
@@ -2674,8 +2678,11 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 !x0 = INT( xspk(ipk) )      ! why do we need +1 
                 !y0 = INT( yspk(ipk) )
                 if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
-                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
-                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  QC( x0+ii, y0+jj, ip )  = subq(ii,jj)
+                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  then
+                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                          QC( x0+ii, y0+jj, ip )  = subq(ii,jj)
+                          !print '(a,9i6,2e12.4)', 'HERE  ',__LINE__, ipk, ip, x0, y0, ii,jj, peaks(ipk)%i,peaks(ipk)%j, subdis(ii,jj), subq(ii,jj)
+                       end if
                 endif
              end do
              end do
@@ -2684,7 +2691,7 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
              ! reconstruction/reconciliation based on a quality/amplitude
              ! measure in rotated rectangle (subblk)
              !------------------------------------------------------------
-             rotangl = - anglx(ipk) 
+             !rotangl = - anglx(ipk) 
              subblk0(:,:)=0.
              ncl  = MIN( INT(clngth(ipk)/2) , nsw/2 )
 
@@ -2725,8 +2732,11 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 x0 = NINT( 1.*xspk(ipk) )      ! do we need +1 
                 y0 = NINT( 1.*yspk(ipk) )  
                 if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
-                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
-                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))   QC( x0+ii, y0+jj, ip ) = subblk(ii,jj)
+                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))  then
+                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                          QC( x0+ii, y0+jj, ip ) = subblk(ii,jj)
+                          !print '(a,9i6,2e12.4)', 'HERE  ',__LINE__, ipk, ip, x0, y0, ii,jj, peaks(ipk)%i,peaks(ipk)%j, subdis(ii,jj), subblk(ii,jj)
+                       end if
                  endif
              end do
              end do
@@ -2740,7 +2750,10 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 x0 = INT( xspk(ipk) )
                 y0 = INT( yspk(ipk) )
                 if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
-                       if (subdis(ii,jj) >= AXC( x0+ii, y0+jj, ip ))  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                       if (subdis(ii,jj) >= AXC( x0+ii, y0+jj, ip ))  then
+                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                          !print '(a,9i6,2e12.4)', 'HERE  ',__LINE__, ipk, ip, x0, y0, ii,jj, peaks(ipk)%i,peaks(ipk)%j, AXC( x0+ii, y0+jj, ip ), subdis(ii,jj)
+                       end if
                  endif
              end do
              end do
