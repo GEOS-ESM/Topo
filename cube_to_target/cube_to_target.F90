@@ -1588,6 +1588,8 @@ program convterr
          deallocate(blocks)
          end if
          deallocate(valid_cells)
+       
+         call destroy_kdtree(tree)  ! free up resources for k-d tree
      
          write(*,*) "Fallback terrain adjustments applied in", count_fallback_clipped, "cells."
      end if
@@ -1945,6 +1947,8 @@ program convterr
       end if
       CALL wrtncdf_unstructured_append_phis(ntarget,terr_target, &
            target_center_lon,target_center_lat,output_fname)
+
+      call destroy_kdtree(tree)  ! free up resources for k-d tree
     end if
 
    call system_clock(tclock2, clock_rate)
