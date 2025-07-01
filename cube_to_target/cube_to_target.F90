@@ -319,7 +319,6 @@ CONTAINS
               else  ! use k-d tree search
                  closest = find_nearest_neighbor_kdtree(tree, target_center_lon(i), target_center_lat(i), i)
              end if
-             write(100,*) i, target_center_lon(i), target_center_lat(i), closest
              call system_clock(tclock2, clock_rate)
              elapsed_time_clsst = elapsed_time_clsst + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
               if (mod(i,100000) == 0) print '(a, i12, i4, e16.6)', 'Elapsed time compute_clsst = ', i, ip, elapsed_time_clsst
@@ -942,7 +941,6 @@ program convterr
               else ! use k-d tree search
                  closest = find_nearest_neighbor_kdtree(tree, target_center_lon(icell), target_center_lat(icell), icell)
               end if
-             write(200,*) i, target_center_lon(i), target_center_lat(i), closest
       
               if (closest > 0) then
                   target_corner_lon(:, icell) = target_corner_lon(:, closest)
@@ -1261,7 +1259,7 @@ program convterr
                      nreconstruction,ldbg,target_center_lon,target_center_lat,area_target,valid_cells,&
                      num_lon_blocks,num_lat_blocks,lon_block_size,lat_block_size,blocks,tree,use_block_neighbor_search)
   
-     write(*,*) "DEBUG 1: Finished overlap_weights subroutine call"   
+     write(*,*) "DEBUG : Finished overlap_weights subroutine call"   
 
      deallocate(target_corner_lon,target_corner_lat)
    end if
@@ -1534,7 +1532,6 @@ program convterr
               else ! use k-d tree search
                  closest = find_nearest_neighbor_kdtree(tree, target_center_lon(icell), target_center_lat(icell), icell)
               end if
-             write(300,*) i, target_center_lon(i), target_center_lat(i), closest
                  if (closest > 0) then
                      ! Check validity of neighbor terrain height
                      if (terr_target(closest) > 8848.0d0 .or. terr_target(closest) < -423.0d0) then
@@ -1582,12 +1579,15 @@ program convterr
          end do
      
          ! Cleanup
+         if (use_block_neighbor_search) then
          do iblock = 1, num_lon_blocks
              do jblock = 1, num_lat_blocks
                  deallocate(blocks(iblock, jblock)%indices)
              end do
          end do
-         deallocate(blocks, valid_cells)
+         deallocate(blocks)
+         end if
+         deallocate(valid_cells)
      
          write(*,*) "Fallback terrain adjustments applied in", count_fallback_clipped, "cells."
      end if

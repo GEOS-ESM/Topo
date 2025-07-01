@@ -224,7 +224,6 @@ end function remap_field
         else  ! use k-d tree search
            closest = find_nearest_neighbor_kdtree(tree, target_center_lon(i), target_center_lat(i), i)
         end if
-        write(400,*) i, target_center_lon(i), target_center_lat(i), closest
         if (closest > 0) then
           f(i) = f(closest)
           write(*,*) "Cell", i, "assigned from neighbor cell", closest, "value:", f(closest)
