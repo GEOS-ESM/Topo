@@ -70,14 +70,18 @@ MODULE neighbor_search_mod
         integer :: ii, jj, k, idx, iblock, jblock, search_radius
         real(8) :: min_dist, dist, dlat, dlon
         logical :: found_valid
+        real(8) :: lat_i, lon_i
 
         min_dist = 1.0d30
         closest = -1
         found_valid = .false.
         search_radius = 1
 
-        iblock = min(num_lon_blocks, max(1, int(target_center_lon(i) / lon_block_size) + 1))
-        jblock = min(num_lat_blocks, max(1, int((target_center_lat(i) + 90.0d0) / lat_block_size) + 1))
+        lat_i = target_center_lat(i)
+        lon_i = target_center_lon(i)
+
+        iblock = min(num_lon_blocks, max(1, int(lon_i / lon_block_size) + 1))
+        jblock = min(num_lat_blocks, max(1, int((lat_i + 90.0d0) / lat_block_size) + 1))
 
         do while (.not. found_valid .and. search_radius <= max_search_radius)
           do ii = max(1, iblock - search_radius), min(num_lon_blocks, iblock + search_radius)
@@ -85,9 +89,9 @@ MODULE neighbor_search_mod
                   do k = 1, blocks(ii,jj)%num_cells
                       idx = blocks(ii,jj)%indices(k)
                       if (valid_cells(idx) .and. idx /= i) then  ! exclude the problematic cell itself
-                          dlat = target_center_lat(idx) - target_center_lat(i)
-                          dlon = target_center_lon(idx) - target_center_lon(i)
-                          dist = dlat**2 + dlon**2
+                          dlat = target_center_lat(idx) - lat_i
+                          dlon = target_center_lon(idx) - lon_i
+                          dist = dlat*dlat + dlon*dlon
                           if (dist < min_dist) then
                               min_dist = dist
                               closest = idx
@@ -110,4 +114,3 @@ MODULE neighbor_search_mod
     end function find_nearest_valid_neighbor
 
 END MODULE neighbor_search_mod
-

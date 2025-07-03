@@ -142,10 +142,12 @@ end function remap_field
   function remap_field_stretched(field, area_target, weights_eul_index_all, weights_lgr_index_all, &
                                  weights_all, ncube, jall, nreconstruction, ntarget, &
                                  target_center_lon, target_center_lat, valid_cells, &
-                                 num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, blocks) result(f)
+                                 num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, blocks, &
+                                 tree, use_block_neighbor_search) result(f)
   
     use shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
     use neighbor_search_mod, ONLY: BlockType, find_nearest_valid_neighbor
+    use kdtree_mod
     implicit none
   
     ! Input arguments
@@ -163,6 +165,8 @@ end function remap_field
     integer, intent(in) :: num_lon_blocks, num_lat_blocks
     real(r8), intent(in) :: lon_block_size, lat_block_size
     type(BlockType), intent(in) :: blocks(:,:)
+    type(kdtree),  intent(in)    :: tree
+    logical, intent(in) :: use_block_neighbor_search
   
     ! Output
     real(r8) :: f(ntarget)
@@ -213,9 +217,13 @@ end function remap_field
         write(*,*) "Problematic final value for cell", i, ":", f(i), "weights sum:", total_weight(i)
   
         ! Robust nearest-neighbor fallback
-        closest = find_nearest_valid_neighbor(i, target_center_lon, target_center_lat, valid_cells, &
+        if (use_block_neighbor_search) then
+           closest = find_nearest_valid_neighbor(i, target_center_lon, target_center_lat, valid_cells, &
                                               num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, &
                                               blocks, 100)
+        else  ! use k-d tree search
+           closest = find_nearest_neighbor_kdtree(tree, target_center_lon(i), target_center_lat(i), i)
+        end if
         if (closest > 0) then
           f(i) = f(closest)
           write(*,*) "Cell", i, "assigned from neighbor cell", closest, "value:", f(closest)

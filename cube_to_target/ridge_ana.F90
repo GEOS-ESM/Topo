@@ -462,6 +462,16 @@ write(*,*) " SHAPE ", shape( peaks%i )
 
    call alloc_ridge_qs(npeaks, NSW, lregional_refinement)
  
+   anisotropy_analysis: block
+   integer(kind=8) :: tclock1, tclock2, clock_rate
+   real(kind=8) :: elapsed_time
+   call system_clock(tclock1)
+!$omp parallel do default(none) &
+!$omp private(ipk,i,j,np,nswx,suba,subarw,subx,suby,ispk,jspk, &
+!$omp subrot) shared(npeaks,peaks,MyPanel,nsw,rdtg,do_refine, &
+!$omp rr_factor,RefFac,NSWx_diag,lregional_refinement,ncube, &
+!$omp nhalo,terr_dev_halo_r4,terr_halo_r4,xv,yv,xspk,yspk, &
+!$omp rdg_profiles_x,mxdis)
    do ipk = 1,npeaks
         i  = peaks(ipk)%i
         j  = peaks(ipk)%j
@@ -523,6 +533,10 @@ write(*,*) " SHAPE ", shape( peaks%i )
         write(*,903,advance='no') achar(13) , ipk, npeaks,nswx , mxdis(ipk)
  
    end do
+   call system_clock(tclock2, clock_rate)
+   elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+   print *, 'Elapsed time anisotropy analysis = ', elapsed_time, ' seconds.'
+   end block anisotropy_analysis
 
     write(*,*)
 
@@ -2260,7 +2274,15 @@ write(*,*) " in fleshout_block "
 !================================
   axc = 0.
 
+  fleshout_bloc: block
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
   do ip=1,6
+!$omp parallel do default(none) &
+!$omp shared(ncube,mxdisC,rrfac,AXC,ip,nsw,anglxC, &
+!$omp nhalo, hwdthC) &
+!$omp private(i,j,nswx,ipk,suba,subr,nhw,jw,rotangl,subdis,ii,jj,x0,y0)
   do j=1,ncube
   do i=1,ncube
      if(mxdisC(i,j,ip)>=1.0) then
@@ -2294,6 +2316,10 @@ write(*,*) " in fleshout_block "
   end do
   write(*,*)" finished panel=",ip
   end do
+  call system_clock(tclock2, clock_rate)
+  elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+  print *, 'Elapsed time fleshout block = ', elapsed_time, ' seconds.'
+  end block fleshout_bloc
 
 end function fleshout_block
 !======================================
@@ -2322,7 +2348,15 @@ function fleshout_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x ) 
 !================================
   axc  =  0.
 
+  fleshout_prof: block
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
   do ip=1,6
+!$omp parallel do default(none) &
+!$omp shared(ncube,mxdisC,rrfac,uniqidC,shape_x,AXC,ip,nsw,anglxC, &
+!$omp psw,nhalo) &
+!$omp private(i,j,nswx,ipk,suba,subr,jw,rotangl,subdis,ii,jj,x0,y0)
   do j=1,ncube
   do i=1,ncube
      if(mxdisC(i,j,ip)>=1.0) then
@@ -2360,6 +2394,10 @@ function fleshout_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x ) 
   end do
   write(*,*)" finished panel=",ip
   end do
+  call system_clock(tclock2, clock_rate)
+  elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+  print *, 'Elapsed time fleshout profi = ', elapsed_time, ' seconds.'
+  end block fleshout_prof
 
 end function fleshout_profi
 
@@ -2392,7 +2430,15 @@ function color_on_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x,co
 !================================
   axc  =  0.
 
+  color_profi: block
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
   do ip=1,6
+!$omp parallel do default(none) &
+!$omp shared(ncube,mxdisC,rrfac,uniqidC,shape_x,AXC,BXC,ip,nsw,anglxC, &
+!$omp psw,nhalo, colors) &
+!$omp private(i,j,nswx,ipk,suba,subr,jw,rotangl,subdis,ii,jj,x0,y0, subcolo)
   do j=1,ncube
   do i=1,ncube
      if(mxdisC(i,j,ip)>=1.0) then
@@ -2440,6 +2486,10 @@ function color_on_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x,co
   end do
   write(*,*)" finished panel=",ip
   end do
+  call system_clock(tclock2, clock_rate)
+  elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+  print *, 'Elapsed time color on profi = ', elapsed_time, ' seconds.'
+  end block color_profi
 
 end function color_on_profi
 
@@ -2561,28 +2611,34 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
 !  is selected based the closeness of the feature center (xs,ys) to
 !  its diagnosed peak-ridgecrest location (xspk,yspk)
 !=======================================================================
+   paintridge2cub: block
+   integer(kind=8) :: tclock1, tclock2, clock_rate
+   real(kind=8) :: elapsed_time
+   call system_clock(tclock1)
   do ipk=1,npeaks
         if(mxdis(ipk)>=1.0) then
  
+            rotangl = - anglx(ipk) 
+
             if(Lcrestwt) then
                suba(:,:) = 0.
                ncl  = MIN( INT(clngth(ipk)/2) , nsw/2 )
                suba( 0 , -ncl:ncl ) = 1.        
-               rotangl = - anglx(ipk) 
+               !rotangl = - anglx(ipk) 
                subr = rotbyx( suba , 2*nsw+1, rotangl )
                subdis = subr 
              else if(Lcrestln) then
                suba(:,:) = 0.
                ncl  = MIN( INT(clngth(ipk)/2) , nsw/2 )
                suba( 0 , -ncl:ncl ) = 1.        
-               rotangl = - anglx(ipk) 
+               !rotangl = - anglx(ipk) 
                subr = rotbyx( suba , 2*nsw+1, rotangl )
                subdis = subr * axr(ipk)
              else            
                suba(:,:) = 0.
                ncl  = MIN( INT(clngth(ipk)/2) , nsw/2 )
                suba( 0 , -ncl:ncl ) = 1.        
-               rotangl = - anglx(ipk) 
+               !rotangl = - anglx(ipk) 
                subr = rotbyx( suba , 2*nsw+1, rotangl )
                subdis =  subr * axr(ipk)
              end if
@@ -2590,7 +2646,7 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
 
 #ifdef ROTATEBRUSH
              ! rotated "brush"
-             rotangl = - anglx(ipk) 
+             !rotangl = - anglx(ipk) 
              sub1 = rotbyx( sub11 , 2*nsw+1, rotangl )
 #endif
 
@@ -2622,8 +2678,11 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 !x0 = INT( xspk(ipk) )      ! why do we need +1 
                 !y0 = INT( yspk(ipk) )
                 if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
-                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
-                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  QC( x0+ii, y0+jj, ip )  = subq(ii,jj)
+                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  then
+                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                          QC( x0+ii, y0+jj, ip )  = subq(ii,jj)
+                          !print '(a,9i6,2e12.4)', 'HERE  ',__LINE__, ipk, ip, x0, y0, ii,jj, peaks(ipk)%i,peaks(ipk)%j, subdis(ii,jj), subq(ii,jj)
+                       end if
                 endif
              end do
              end do
@@ -2632,7 +2691,7 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
              ! reconstruction/reconciliation based on a quality/amplitude
              ! measure in rotated rectangle (subblk)
              !------------------------------------------------------------
-             rotangl = - anglx(ipk) 
+             !rotangl = - anglx(ipk) 
              subblk0(:,:)=0.
              ncl  = MIN( INT(clngth(ipk)/2) , nsw/2 )
 
@@ -2673,8 +2732,11 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 x0 = NINT( 1.*xspk(ipk) )      ! do we need +1 
                 y0 = NINT( 1.*yspk(ipk) )  
                 if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
-                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
-                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))   QC( x0+ii, y0+jj, ip ) = subblk(ii,jj)
+                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))  then
+                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                          QC( x0+ii, y0+jj, ip ) = subblk(ii,jj)
+                          !print '(a,9i6,2e12.4)', 'HERE  ',__LINE__, ipk, ip, x0, y0, ii,jj, peaks(ipk)%i,peaks(ipk)%j, subdis(ii,jj), subblk(ii,jj)
+                       end if
                  endif
              end do
              end do
@@ -2688,15 +2750,22 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 x0 = INT( xspk(ipk) )
                 y0 = INT( yspk(ipk) )
                 if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
-                       if (subdis(ii,jj) >= AXC( x0+ii, y0+jj, ip ))  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                       if (subdis(ii,jj) >= AXC( x0+ii, y0+jj, ip ))  then
+                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                          !print '(a,9i6,2e12.4)', 'HERE  ',__LINE__, ipk, ip, x0, y0, ii,jj, peaks(ipk)%i,peaks(ipk)%j, AXC( x0+ii, y0+jj, ip ), subdis(ii,jj)
+                       end if
                  endif
              end do
              end do
              end if
           end if
       end do
+   call system_clock(tclock2, clock_rate)
+   elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+   print *, 'Elapsed time paintridge2cube = ', elapsed_time, ' seconds.'
+   end block paintridge2cub
 
-     write(*,*) " finished paintridge2cube "
+  write(*,*) " finished paintridge2cube "
      
   end function paintridge2cube
  !==================================================================

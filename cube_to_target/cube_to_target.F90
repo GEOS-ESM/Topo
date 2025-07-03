@@ -42,12 +42,13 @@ CONTAINS
    SUBROUTINE overlap_weights(weights_lgr_index_all,weights_eul_index_all,weights_all,&
              jall,ncube,ngauss,ntarget,ncorner,jmax_segments,target_corner_lon,target_corner_lat,&
               nreconstruction,ldbg,target_center_lon,target_center_lat,area_target,valid_cells,&
-              num_lon_blocks,num_lat_blocks,lon_block_size,lat_block_size,blocks)
+              num_lon_blocks,num_lat_blocks,lon_block_size,lat_block_size,blocks,tree,use_block_neighbor_search)
 
     use shr_kind_mod, only: r8 => shr_kind_r8,i8 => shr_kind_i8
     use remap
     use shared_vars, only: progress_bar
     use neighbor_search_mod, ONLY: BlockType, find_nearest_valid_neighbor
+    use kdtree_mod
     IMPLICIT NONE
 
     !----------------------------------------------------------------------
@@ -67,6 +68,8 @@ CONTAINS
     REAL   (r8),                    INTENT(IN)    :: target_corner_lon(ncorner,ntarget)
     REAL   (r8),                    INTENT(IN)    :: target_corner_lat(ncorner,ntarget)
     LOGICAL,                        INTENT(IN)    :: ldbg
+    type(kdtree),                   INTENT(IN)    :: tree
+    LOGICAL,           INTENT(IN)    :: use_block_neighbor_search
     !----------------------------------------------------------------------
     !  Local scalars / arrays
     !----------------------------------------------------------------------
@@ -136,9 +139,12 @@ CONTAINS
 
     jall = 0
 
-
     DO i=1,ntarget
 
+      block
+      integer(kind=8) :: tclock1, tclock2, clock_rate
+      real(kind=8), save :: elapsed_time_target = 0.d0
+      call system_clock(tclock1)
 
       !if (MOD(i,10)==0)call progress_bar("# ", i, DBLE(100*i)/DBLE(ntarget))  !commented out b/c log to large
       !
@@ -148,8 +154,16 @@ CONTAINS
       !
       !---------------------------------------------------
       !
+      rmv_dupl: block
+      integer(kind=8) :: tclock1, tclock2, clock_rate
+      real(kind=8), save :: elapsed_time_rmvd = 0.d0
+      call system_clock(tclock1)
       CALL remove_duplicates_latlon(ncorner,target_corner_lon(:,i),target_corner_lat(:,i),&
            ncorner_this_cell,lon,lat,1.0E-10)
+      call system_clock(tclock2, clock_rate)
+      elapsed_time_rmvd = elapsed_time_rmvd + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+       if (mod(i,100000) == 0) print '(a, i12, e16.6)', 'Elapsed time rmvd = ', i, elapsed_time_rmvd
+       end block rmv_dupl
 
       IF (ldbg) THEN
         WRITE(*,*) "number of vertices ",ncorner_this_cell
@@ -168,6 +182,10 @@ CONTAINS
       !---------------------------------------------------          
       !
 #ifdef old    
+      dold: block
+      integer(kind=8) :: tclock1, tclock2, clock_rate
+      real(kind=8), save :: elapsed_time_dold = 0.d0
+      call system_clock(tclock1)
       DO j=1,ncorner_this_cell
         CALL CubedSphereABPFromRLL(lon(j), lat(j), alpha, beta, ipanel_tmp(j), .TRUE.)
         IF (ldbg) WRITE(*,*) "ipanel for corner ",j," is ",ipanel_tmp(j)
@@ -186,10 +204,18 @@ CONTAINS
       END IF
       CALL remove_duplicates_integer(ncorner_this_cell+1,ipanel_tmp(1:ncorner_this_cell+1),&
            k,ipanel_array(1:ncorner_this_cell+1))
+      call system_clock(tclock2, clock_rate)
+      elapsed_time_dold = elapsed_time_dold + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+       if (mod(i,100000) == 0) print '(a, i12, e16.6)', 'Elapsed time dold = ', i, elapsed_time_dold
+       end block dold
 #endif
       !
       ! make sure to include possible overlap areas not on the face the vertices are located
       ! For example, a cell could be on panel 3 and 5 but have overlap area on panel 2
+      CSABPF: block
+      integer(kind=8) :: tclock1, tclock2, clock_rate
+      real(kind=8), save :: elapsed_time_CSABPF = 0.d0
+      call system_clock(tclock1)
       count = 0
       do ilat=-1,1
         do ilon=-1,1
@@ -199,12 +225,24 @@ CONTAINS
           END DO
         end do
       end do
+      call system_clock(tclock2, clock_rate)
+      elapsed_time_CSABPF = elapsed_time_CSABPF + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+       if (mod(i,100000) == 0) print '(a, i12, e16.6)', 'Elapsed time CSABPF = ', i, elapsed_time_CSABPF
+       end block CSABPF
 
       !
       ! remove duplicates in ipanel_tmp
       !
+      rmv_dupli: block
+      integer(kind=8) :: tclock1, tclock2, clock_rate
+      real(kind=8), save :: elapsed_time_rmvdi = 0.d0
+      call system_clock(tclock1)
       CALL remove_duplicates_integer(count,ipanel_tmp(1:count),&
            k,ipanel_array(1:count))
+      call system_clock(tclock2, clock_rate)
+      elapsed_time_rmvdi = elapsed_time_rmvdi + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+       if (mod(i,100000) == 0) print '(a, i12, e16.6)', 'Elapsed time rmvdi = ', i, elapsed_time_rmvdi
+       end block rmv_dupli
       !
       !---------------------------------------------------
       !
@@ -214,6 +252,10 @@ CONTAINS
       !
       DO ip = 1,k
         ipanel = ipanel_array(ip)
+        CSABPF2: block
+        integer(kind=8) :: tclock1, tclock2, clock_rate
+        real(kind=8), save :: elapsed_time_CSABPF2 = 0.d0
+        call system_clock(tclock1)
         DO j=1,ncorner_this_cell
           ii = ipanel
           CALL CubedSphereABPFromRLL(lon(j), lat(j), alpha, beta, ii,.FALSE.)
@@ -224,6 +266,10 @@ CONTAINS
           xcell(ncorner_this_cell+1-j) = TAN(alpha)
           ycell(ncorner_this_cell+1-j) = TAN(beta)
         END DO
+        call system_clock(tclock2, clock_rate)
+        elapsed_time_CSABPF2 = elapsed_time_CSABPF2 + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+         if (mod(i,100000) == 0) print '(a, i12, i4, e16.6)', 'Elapsed time CSABPF2 = ', i, ip, elapsed_time_CSABPF2
+         end block CSABPF2
         xcell(0) = xcell(ncorner_this_cell)
         ycell(0) = ycell(ncorner_this_cell)
         xcell(ncorner_this_cell+1) = xcell(1)
@@ -232,11 +278,19 @@ CONTAINS
         jx = MAX(MIN(jx,ncube+1),0)
         jy = MAX(MIN(jy,ncube+1),0)
 
+        compute_wt: block 
+        integer(kind=8) :: tclock1, tclock2, clock_rate
+        real(kind=8), save :: elapsed_time_cwtall = 0.d0
+        call system_clock(tclock1)
         CALL compute_weights_cell(xcell(0:ncorner_this_cell+1),ycell(0:ncorner_this_cell+1),&
              jx,jy,nreconstruction,xgno,ygno,&
              1, ncube+1, 1,ncube+1, tmp,&
              ngauss,gauss_weights,abscissae,weights,weights_eul_index,jcollect,jmax_segments,&
              ncube,0,ncorner_this_cell,ldbg,i)
+         call system_clock(tclock2, clock_rate)
+         elapsed_time_cwtall = elapsed_time_cwtall + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+          if (mod(i,100000) == 0) print '(a, i12, i4, e16.6)', 'Elapsed time compute_wtsc = ', i, ip, elapsed_time_cwtall
+         end block compute_wt
 
          if (jcollect <= 0 .or. sum(weights(1:jcollect, 1)) < 1.0d-12) then
          
@@ -254,10 +308,26 @@ CONTAINS
                  write(*,*) "lon_block_size:", lon_block_size, "lat_block_size:", lat_block_size
              endif
          
-             closest = find_nearest_valid_neighbor(i, target_center_lon, target_center_lat, valid_cells, &
-                                                   num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, &
-                                                   blocks, 10)
+             clsst: block 
+             integer(kind=8) :: tclock1, tclock2, clock_rate
+             real(kind=8), save :: elapsed_time_clsst = 0.d0
+             call system_clock(tclock1)
+              if (use_block_neighbor_search) then
+                 closest = find_nearest_valid_neighbor(i, target_center_lon, target_center_lat, valid_cells, &
+                                                  num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, &
+                                                  blocks, 10)
+              else  ! use k-d tree search
+                 closest = find_nearest_neighbor_kdtree(tree, target_center_lon(i), target_center_lat(i), i)
+             end if
+             call system_clock(tclock2, clock_rate)
+             elapsed_time_clsst = elapsed_time_clsst + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+              if (mod(i,100000) == 0) print '(a, i12, i4, e16.6)', 'Elapsed time compute_clsst = ', i, ip, elapsed_time_clsst
+             end block clsst
          
+             ensure_cap0: block
+             integer(kind=8) :: tclock1, tclock2, clock_rate
+             real(kind=8), save :: elapsed_time_ensc0 = 0.d0
+             call system_clock(tclock1)
              if (closest > 0) then
                  if (.not.allocated(weights_all) .or. SIZE(weights_all,1) < jall + 1) then
                      CALL ensure_capacity(INT(1024, i8), jall, nreconstruction, &
@@ -274,6 +344,10 @@ CONTAINS
              else if (print_limited) then
                  write(*,*) "No valid neighbor found for cell", i
              endif
+             call system_clock(tclock2, clock_rate)
+             elapsed_time_ensc0 = elapsed_time_ensc0 + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+             if (mod(i,100000) == 0) print '(a, i12, i4, e16.6)', 'Elapsed time  ensure_cap = ', i, ip, elapsed_time_ensc0
+             end block ensure_cap0
             ! Skip the rest of processing since you've handled it explicitly
              cycle
          endif
@@ -292,23 +366,44 @@ CONTAINS
         ENDIF
 
 
+       ensure_cap: block
+       integer(kind=8) :: tclock1, tclock2, clock_rate
+       real(kind=8), save :: elapsed_time_ensc = 0.d0
+       call system_clock(tclock1)
        IF (.NOT. ALLOCATED(weights_all) .OR. &
            SIZE(weights_all,1) < jall + jcollect) THEN
          CALL ensure_capacity(INT(MAX(jcollect,1024), i8),jall, nreconstruction, &
                               weights_all, weights_eul_index_all, &
                               weights_lgr_index_all)
        END IF
+       call system_clock(tclock2, clock_rate)
+       elapsed_time_ensc = elapsed_time_ensc + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+       if (mod(i,100000) == 0) print '(a, i12, i4, e16.6)', 'Elapsed time  ensure_cap = ', i, ip, elapsed_time_ensc
+       end block ensure_cap
 
 
+        weights_al: block
+       integer(kind=8) :: tclock1, tclock2, clock_rate
+       real(kind=8), save :: elapsed_time_wall = 0.d0
+       call system_clock(tclock1)
         weights_all(jall + 1 : jall + jcollect, :) = weights(1:jcollect,:)
         weights_eul_index_all(jall + 1 : jall + jcollect, 1:2) = weights_eul_index(1:jcollect,:)
         weights_eul_index_all(jall + 1 : jall + jcollect, 3) = ipanel
         weights_lgr_index_all(jall + 1 : jall + jcollect) = i
+       call system_clock(tclock2, clock_rate)
+       elapsed_time_wall = elapsed_time_wall + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+       if (mod(i,100000) == 0) print '(a, i12, i4, e16.6)', 'Elapsed time weights_all = ', i, ip, elapsed_time_wall
+        end block weights_al
 
         jall = jall + jcollect
 
       END DO
+      call system_clock(tclock2, clock_rate)
+      elapsed_time_target = elapsed_time_target + (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+       if (mod(i,100000) == 0) print '(a, i12, e16.6)', 'Elapsed time target = ', i, elapsed_time_target
+      end block
     END DO
+
 
     !====================================================================
     !  ensure_capacity  – dynamically (re)allocates the three big weight
@@ -401,6 +496,7 @@ program convterr
   use f90getopt
   use overlap_mod
   USE neighbor_search_mod, ONLY: BlockType, find_nearest_valid_neighbor
+  use kdtree_mod
   
   implicit none
 #     include         <netcdf.inc>
@@ -532,6 +628,14 @@ program convterr
   integer :: icorner, icell
   integer :: iblock, jblock
 
+  logical :: use_block_neighbor_search = .false. ! set this to true for block neigbor search instead of the fast k-d tree appraoch
+
+  type(kdtree) :: tree
+
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
+
 
   !               
   !                     long name                   has     | short | specified    | required
@@ -561,6 +665,7 @@ program convterr
   opts(22) = option_s( "smooth_phis_numcycle"      ,.true.    , 'l'   ,.false.       ,.false.)
   opts(23) = option_s( "smoothing_over_ocean"      ,.false.   , 'm'   ,.false.       ,.false.)
   opts(24) = option_s( "jmax_segments"             ,.true.    , 'j'   ,.false.       ,.false.)
+  opts(25) = option_s( "use_block_neighbor_search" ,.false.    , 'w'  ,.false.       ,.false.)
  
   write(*,*)'bmaa hello' 
   ! END longopts
@@ -774,26 +879,50 @@ program convterr
 
       allocate(valid_cells(ntarget))
       valid_cells = (grid_fallback_mask /= 1)
-      
-      ! Allocate valid_cells and populate blocks immediately after reading the grid:
-      allocate(blocks(num_lon_blocks, num_lat_blocks))
-      do iblock = 1, num_lon_blocks
-          do jblock = 1, num_lat_blocks
-              blocks(iblock, jblock)%num_cells = 0
-              allocate(blocks(iblock, jblock)%indices(0))
-          end do
-      end do
-
-      ! Populate valid cells into blocks
       do icell = 1, ntarget
-          if (valid_cells(icell)) then
-              iblock = min(num_lon_blocks, max(1, int(target_center_lon(icell) / lon_block_size) + 1))
-              jblock = min(num_lat_blocks, max(1, int((target_center_lat(icell) + 90.0d0) / lat_block_size) + 1))
-  
-              blocks(iblock, jblock)%num_cells = blocks(iblock, jblock)%num_cells + 1
-              blocks(iblock, jblock)%indices = [blocks(iblock, jblock)%indices, icell]
+          if (all(target_corner_lon(:, icell) == 0.0d0) .and. &
+              all(target_corner_lat(:, icell) == 0.0d0)) then 
+      
+              write(*,*) "Fully invalid coordinates detected at cell:", icell
+              valid_cells(icell) = .false.  ! mark as invalid immediately
           end if
       end do
+      
+      ! Allocate valid_cells and populate blocks immediately after reading the grid:
+      if (use_block_neighbor_search) then
+          allocate(blocks(num_lon_blocks, num_lat_blocks))
+          do iblock = 1, num_lon_blocks
+              do jblock = 1, num_lat_blocks
+                  blocks(iblock, jblock)%num_cells = 0
+                  allocate(blocks(iblock, jblock)%indices(0))
+              end do
+          end do
+
+          ! Populate valid cells into blocks
+          do icell = 1, ntarget
+              if (valid_cells(icell)) then
+                  iblock = min(num_lon_blocks, max(1, int(target_center_lon(icell) / lon_block_size) + 1))
+                  jblock = min(num_lat_blocks, max(1, int((target_center_lat(icell) + 90.0d0) / lat_block_size) + 1))
+  
+                  blocks(iblock, jblock)%num_cells = blocks(iblock, jblock)%num_cells + 1
+                  blocks(iblock, jblock)%indices = [blocks(iblock, jblock)%indices, icell]
+              end if
+          end do
+
+      else  ! use k-d tree
+
+          b_kdtree: block
+          integer(kind=8) :: tclock1, tclock2, clock_rate
+          real(kind=8) :: elapsed_time_bkdt
+          call system_clock(tclock1)
+          print *, 'HERE in build kd tree ... ', __LINE__
+          call build_kdtree(tree, target_center_lon, target_center_lat, valid_cells)
+          call system_clock(tclock2, clock_rate)
+          elapsed_time_bkdt = (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+           print '(a, e16.6)', 'Elapsed time bkdt = ', elapsed_time_bkdt
+          end block b_kdtree
+
+      end if ! use_block_neighbor_search
 
       ! Identify and fix invalid coordinates (fully zeroed cells)
       do icell = 1, ntarget
@@ -804,9 +933,14 @@ program convterr
               valid_cells(icell) = .false.  ! mark as invalid immediately
       
               ! Robust fix using find_nearest_valid_neighbor
-              closest = find_nearest_valid_neighbor(icell, target_center_lon, target_center_lat, valid_cells, &
+
+              if (use_block_neighbor_search) then
+                 closest = find_nearest_valid_neighbor(icell, target_center_lon, target_center_lat, valid_cells, &
                                                     num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, &
                                                     blocks, 100)
+              else ! use k-d tree search
+                 closest = find_nearest_neighbor_kdtree(tree, target_center_lon(icell), target_center_lat(icell), icell)
+              end if
       
               if (closest > 0) then
                   target_corner_lon(:, icell) = target_corner_lon(:, closest)
@@ -837,7 +971,7 @@ program convterr
     allocate (area_target(ntarget),stat=alloc_error )
     area_target = 0.0
 
-  end if
+  end if   !.not.lstop_after_smoothing
 
   if (maxval(target_rrfac)/minval(target_rrfac)<1.5) then
     write(*,*) "rrfac specified but little variation: max(rrfac)/min(rrfac)=",maxval(target_rrfac)/minval(target_rrfac)
@@ -1123,9 +1257,9 @@ program convterr
       CALL overlap_weights(weights_lgr_index_all,weights_eul_index_all,weights_all,&
                      jall,ncube,ngauss,ntarget,ncorner,jmax_segments,target_corner_lon,target_corner_lat,&
                      nreconstruction,ldbg,target_center_lon,target_center_lat,area_target,valid_cells,&
-                     num_lon_blocks,num_lat_blocks,lon_block_size,lat_block_size,blocks)
+                     num_lon_blocks,num_lat_blocks,lon_block_size,lat_block_size,blocks,tree,use_block_neighbor_search)
   
-     write(*,*) "DEBUG: Finished overlap_weights subroutine call"   
+     write(*,*) "DEBUG : Finished overlap_weights subroutine call"   
 
      deallocate(target_corner_lon,target_corner_lat)
    end if
@@ -1269,16 +1403,12 @@ program convterr
     if(lfind_ridges) then
       nsw = nwindow_halfwidth
       nhalo=2*nsw
-      
       call find_local_maxes ( terr_dev, ncube, nhalo, nsw, iopt_ridge_seed, &
                               lregional_refinement, rrfac )
-
-
       call find_ridges ( terr_dev, terr, ncube, nhalo, nsw,&
            ncube_sph_smooth_coarse   , ncube_sph_smooth_fine,   &
            ldevelopment_diags, lregional_refinement=lregional_refinement,&
            rr_factor = rrfac  )
-
     endif
     
     !*********************************************************
@@ -1334,7 +1464,8 @@ program convterr
                                            nreconstruction, ntarget, target_center_lon, &
                                            target_center_lat, valid_cells, &
                                            num_lon_blocks, num_lat_blocks, &
-                                           lon_block_size, lat_block_size, blocks)
+                                           lon_block_size, lat_block_size, blocks, &
+                                           tree, use_block_neighbor_search)
     else
        terr_target = remap_field(terr, area_target, weights_eul_index_all, &
                                  weights_lgr_index_all, weights_all, ncube, jall, &
@@ -1394,9 +1525,13 @@ program convterr
              if (grid_fallback_mask(icell) == 1) then
                  original_terrain = terr_target(icell)
      
+              if (use_block_neighbor_search) then
                  closest = find_nearest_valid_neighbor(icell, target_center_lon, target_center_lat, valid_cells, &
                                                        num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, &
                                                        blocks, 10)
+              else ! use k-d tree search
+                 closest = find_nearest_neighbor_kdtree(tree, target_center_lon(icell), target_center_lat(icell), icell)
+              end if
                  if (closest > 0) then
                      ! Check validity of neighbor terrain height
                      if (terr_target(closest) > 8848.0d0 .or. terr_target(closest) < -423.0d0) then
@@ -1444,12 +1579,17 @@ program convterr
          end do
      
          ! Cleanup
+         if (use_block_neighbor_search) then
          do iblock = 1, num_lon_blocks
              do jblock = 1, num_lat_blocks
                  deallocate(blocks(iblock, jblock)%indices)
              end do
          end do
-         deallocate(blocks, valid_cells)
+         deallocate(blocks)
+         end if
+         deallocate(valid_cells)
+       
+         call destroy_kdtree(tree)  ! free up resources for k-d tree
      
          write(*,*) "Fallback terrain adjustments applied in", count_fallback_clipped, "cells."
      end if
@@ -1737,11 +1877,25 @@ program convterr
         CALL bilinear_interp(ncube,ntarget,target_center_lon,target_center_lat,terr_sm(1:ncube,1:ncube,:),terr_target)
       else
         jall = 0   ! dynamic fill again for GLL grid
+
+        if (.not. use_block_neighbor_search) then
+           b_kdtree2: block
+           integer(kind=8) :: tclock1, tclock2, clock_rate
+           real(kind=8) :: elapsed_time_bkdt
+           call system_clock(tclock1)
+           print *, 'HERE in build kd tree ... ', __LINE__
+           call build_kdtree(tree, target_center_lon, target_center_lat, valid_cells)
+           call system_clock(tclock2, clock_rate)
+           elapsed_time_bkdt = (real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8))
+            print '(a, e16.6)', 'Elapsed time bkdt 2 = ', elapsed_time_bkdt
+           end block b_kdtree2
+        end if
         
          CALL overlap_weights(weights_lgr_index_all,weights_eul_index_all,weights_all,&
                      jall,ncube,ngauss,ntarget,ncorner,jmax_segments,target_corner_lon,target_corner_lat,&
                      nreconstruction,ldbg,target_center_lon,target_center_lat,area_target,valid_cells,&
-                     num_lon_blocks,num_lat_blocks,lon_block_size,lat_block_size,blocks)
+                     num_lon_blocks,num_lat_blocks,lon_block_size,lat_block_size,blocks,tree,   &
+                     use_block_neighbor_search)
         
         allocate (area_target(ntarget))
         
@@ -1793,7 +1947,14 @@ program convterr
       end if
       CALL wrtncdf_unstructured_append_phis(ntarget,terr_target, &
            target_center_lon,target_center_lat,output_fname)
+
+      call destroy_kdtree(tree)  ! free up resources for k-d tree
     end if
+
+   call system_clock(tclock2, clock_rate)
+   elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+   print *, 'Elapsed time program convterr = ', elapsed_time, ' seconds.'
+
     end program convterr
 
    subroutine print_help

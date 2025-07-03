@@ -338,6 +338,10 @@ CONTAINS
             terr_sm  = terr
             dt       = 16.0_r8 / REAL(smooth_phis_numcycle, r8)
          
+      smooth_phis_cycle: block
+      integer(kind=8) :: tclock1, tclock2, clock_rate
+      real(kind=8) :: elapsed_time
+      call system_clock(tclock1)
             do iter = 1, smooth_phis_numcycle
                call progress_bar("# ", iter, 100.0_r8*iter/smooth_phis_numcycle)
                call laplacian(terr_sm, ncube, lap, landfrac_local, lsmoothing_over_ocean)
@@ -349,6 +353,10 @@ CONTAINS
                   stop
                end if
             end do
+      call system_clock(tclock2, clock_rate)
+      elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+      print *, 'Elapsed time smooth_phis_cycle smooth_topo_cube = ', elapsed_time, ' seconds.'
+      end block smooth_phis_cycle
          
          else
             !––– SCHMIDT-STRETCHED SMOOTHER –––––––––––––––––––––––––––
