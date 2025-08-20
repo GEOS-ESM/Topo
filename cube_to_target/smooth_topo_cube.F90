@@ -85,12 +85,13 @@ CONTAINS
 
     logical             :: do_schmidt                             ! needed for stretched grid - do_schmidt
     real(r8)            :: target_lon, target_lat, stretch_factor ! needed for stretched grid - do_schmidt
-    real(r8)            :: base_dt, alpha                         ! needed for stretched grid - do_schmidt
+    real(r8)            :: base_dt                                ! needed for stretched grid - do_schmidt
+    real(r8)            :: alpha = 1.0_r8         ! Default alpha ! needed for stretched grid - do_schmidt
 
-    real(r8), parameter :: rearth = 6.37122e6 !radius of Earth from CIME/CESM
+    real(r8), parameter :: rearth = 6.37122e6                     !radius of Earth from CIME/CESM
     real(r8)            :: nu_lap_unit_sphere,dt
-    real(r8)            :: min_terr, max_terr   !to check if Laplacian smoother is stable
-    real(r8)            :: min_rrfac, max_rrfac !to check if Laplacian smoother is stable
+    real(r8)            :: min_terr, max_terr                     !to check if Laplacian smoother is stable
+    real(r8)            :: min_rrfac, max_rrfac                   !to check if Laplacian smoother is stable
 
     ! If caller forgot to set the flag, infer it from rrfac & refinement
     if (.not. lsmooth_rrfac) then   
@@ -112,7 +113,7 @@ CONTAINS
        write(*,*) " Read precomputed filtered topography from ",trim(smooth_topo_fname)
        call read_topo_smooth_data(smooth_topo_fname,ncube*ncube*6,terr_sm,terr_dev)
     
-       if (.NOT. lregional_refinement) RETURN  ! explicitly preserve original early-return logic
+       if (.NOT. lregional_refinement) RETURN  
     
        ! Proceed only if refinement is requested
        terr_sm00  = terr_sm
@@ -268,7 +269,7 @@ CONTAINS
          end if
 
          ! Stretch-grid control (YAML may say DO_SCHMIDT: true/false)
-         call read_gen_scrip('GenScrip.yaml', do_schmidt, target_lon, target_lat, stretch_factor)
+         call read_gen_scrip('GenScrip.yaml', do_schmidt, target_lon, target_lat, stretch_factor, alpha)
 
        !---------------------------------------------------------------------------------------
        !  Surface-height smoothing
@@ -293,19 +294,9 @@ CONTAINS
        !            base_dt = 16 / smooth_phis_numcycle         (regular-grid value)
        !            dt      = base_dt / (stretch_factor*4)      (extra safety for zoom)
        !
-       !        `stretch_factor` is the Schmidt refinement factor n.
-       !            Local grid spacing = coarse-grid spacing / n
-       !            Effective resolution = C_base × n
-       !               examples:  (C-equivalent values are illustrative; any n≥1 works.)
-       !                   C270  with n = 2.5   → local ≈ C675
-       !                   C540  with n = 2.5   → local ≈ C1350
-       !                   C1539 with n = 3.0   → local ≈ C4617
        !        The extra “×4” in  dt = base_dt / (n*4)  is a universal safety
        !        margin so the smallest refined cell stays within the global CFL
        !        limit, independent of the exact value of n.
-       !
-       !      – Limit each update with an empirical α = 0.3 to damp the first
-       !        iteration spike that can appear at sharp terrain steps.
        !
        !   The guard:
        !        if (.not. any(rrfac > 0.)) then
@@ -313,15 +304,6 @@ CONTAINS
        !        endif
        !    allows the exact same subroutine to run on a regular grid where
        !    rr_factor==1 everywhere (the new maths collapses to the old one).
-       !
-       !   Runtime sanity-check:
-       !        MAXVAL(terr_sm) > 1.2*MAX(terr)  OR  MINVAL(terr_sm) < MIN(terr)-500 m
-       !    catches a divergence early and aborts with a clear message instead
-       !    of corrupting the topo file.
-       !
-       ! Short version: all extra factors keep ∆t/∆x² locally the same as the
-       ! coarse grid, so stretched runs are stable while regular runs remain
-       ! bit-for-bit identical to the historical smoother.
        !========================================================================================
        write(*,*) "Before smoothing checks:"
        write(*,*) "terr min/max:", MINVAL(terr), MAXVAL(terr)
@@ -372,11 +354,11 @@ CONTAINS
                max_terr = MAXVAL(terr);  min_terr = MINVAL(terr)
                base_dt  = 16.0_r8 / REAL(smooth_phis_numcycle, r8)
                dt       = base_dt / (stretch_factor*4.0_r8)   ! tighter CFL for stretched
-               alpha    = 0.3_r8                              ! optional limiter
          
                do iter = 1, smooth_phis_numcycle
                   call progress_bar("# ", iter, 100.0_r8*iter/smooth_phis_numcycle)
                   call laplacian(terr_sm, ncube, lap, landfrac, lsmoothing_over_ocean)
+                  ! alpha change in terr_sm  will tune gwd (which is SGH)
                   terr_sm = terr_sm + alpha*(lap*dt*nu_lap_unit_sphere*rrfac_sm)
          
                   if (MAXVAL(terr_sm) > 1.2_r8*max_terr .or. MINVAL(terr_sm) < min_terr-500._r8) then
@@ -387,12 +369,12 @@ CONTAINS
             end if
          end if ! <– closes “if (.not. do_schmidt)”
        endif    ! <- closes "IF (ldistance_weighted_smoother)"
-!====================================================================
-! >>> be sure refined cap is merged with coarse halo <<<
-!====================================================================
-         ! Any cell whose r‑factor update is > 1 belongs to the refined cap.
-         ! Copy refined topo over the pre‑existing coarse field.
-         ! build mask once, independent of smoother branch
+    !====================================================================
+    ! >>> be sure refined cap is merged with coarse halo <<<
+    !====================================================================
+     ! Any cell whose r‑factor update is > 1 belongs to the refined cap.
+     ! Copy refined topo over the pre‑existing coarse field.
+     ! build mask once, independent of smoother branch
       if (lregional_refinement) rr_updt = rrfac 
 
       if (lregional_refinement) then
@@ -466,20 +448,21 @@ CONTAINS
 
  !-------------------------------------------------------------------
  ! read_gen_scrip
- !   Reads four key/value lines from GenScrip.yaml:
- !     DO_SCHMIDT, TARGET_LON, TARGET_LAT, STRETCH_FACTOR
+ !   Reads five key/value lines from GenScrip.yaml:
+ !     DO_SCHMIDT, TARGET_LON, TARGET_LAT, STRETCH_FACTOR, ALPHA
  !   Returns them through the intent-out arguments.
  !   If the file can’t be opened the routine simply returns with
  !   default values (no Schmidt stretching).
  !-------------------------------------------------------------------
 
-  subroutine read_gen_scrip(  cfgFile   , do_schmidt  , target_lon , target_lat    , stretch_factor )
+  subroutine read_gen_scrip(  cfgFile   , do_schmidt  , target_lon , target_lat    , stretch_factor , alpha)  
     implicit none
   
     !-- arguments
     character(len=*), intent(in ) :: cfgFile
     logical        , intent(out) :: do_schmidt
     real(r8)       , intent(out) :: target_lon, target_lat, stretch_factor
+    real(r8)       , intent(out) :: alpha
   
     !-- locals
     integer              :: ios, unit, idx
@@ -491,6 +474,7 @@ CONTAINS
     target_lon     =  0.0_r8 
     target_lat     =  0.0_r8
     stretch_factor =  1.0_r8
+    alpha          =  1.0_r8
             
     open(newunit=unit, file=cfgFile, status='old', action='read', iostat=ios)
     if (ios /= 0) then 
@@ -519,6 +503,15 @@ CONTAINS
         read(valstr, *) target_lat
       case('STRETCH_FACTOR')
         read(valstr, *) stretch_factor 
+      case('ALPHA')
+        if (len_trim(valstr) > 0) then
+          read(valstr, *, iostat=ios) alpha
+          if (ios /= 0) then
+            write(*,*) 'WARNING: Could not parse ALPHA="', trim(valstr), '" – keeping default alpha=', alpha
+          end if
+        else
+          ! leave the default alpha as-is (e.g., 1.0 if we don't need to tune GWD)
+        end if
       end select
     end do   
          

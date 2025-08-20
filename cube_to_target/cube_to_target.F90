@@ -6,6 +6,7 @@
 !  Author: Peter Hjort Lauritzen (pel@ucar.edu), AMP/CGD/NCAR 
 !          Julio Bacmeister, AMP/CGD/NCAR 
 !          Adam Herrington, AMP/CGD/NCAR
+!          NASA GMAO Modelling group edits 
 !
 ! ex: ./cube_to_target --help to get list of long and short option names.
 
@@ -705,7 +706,7 @@ program convterr
       opts(3)%specified = .true.
     case( 'h' )
       call print_help
-      opts(4)%specified = .true.
+      stop 0
     case( 'i' )
       intermediate_cubed_sphere_fname = optarg
       write(str,*) TRIM(optarg)
@@ -1377,16 +1378,12 @@ program convterr
   write(*,*) "            Difference       = ",(volterr - volterr_sm)/(6*sum(da))
  
 !------------------------------------------------------------
-! Optional global-volume correction after smoothing
-!
+!       Global-volume correction after smoothing
 !  Smoothing diffuses peaks more than it fills valleys, so the
 !  integrated terrain volume (and mean PHIS) usually drops a
 !  bit.  The line below rescales the smoothed field so that its
-!  volume matches the original.  Enable it if your downstream
-!  model needs strict preservation of global mean height.
-!
+!  volume matches the original. 
 !  terr_sm = (volterr / volterr_sm) * terr_sm
-!
 !------------------------------------------------------------  
 
   if (ldistance_weighted_smoother .or. lregional_refinement) then
@@ -2005,7 +2002,6 @@ program convterr
   !
   !
   !+++ARH
-  !subroutine wrtncdf_unstructured(n,terr,landfrac,sgh,sgh30,landm_coslat,lon,lat,area,output_fname,lfind_ridges)
   subroutine wrtncdf_unstructured(n,terr,landfrac,sgh,sgh30,landm_coslat,lon,lat,area,&
        output_fname,lfind_ridges,command_line_arguments,&
        lwrite_rrfac_to_topo_file,rrfac_target,str_creator,area_target,llandfrac)
@@ -2046,7 +2042,6 @@ program convterr
     integer            :: latvid
     integer            :: terrid, areaid!,nid
     !+++ARH
-    !integer            :: landfracid,sghid,sgh30id,landm_coslatid
     integer            :: landfracid,sghid,sgh30id,landm_coslatid
     !---ARH
     integer             :: mxdisid, ang22id, anixyid, anisoid, mxvrxid, mxvryid, hwdthid, wghtsid, anglxid, gbxarid
@@ -2054,7 +2049,6 @@ program convterr
     integer             :: ThisId
     
     integer            :: status    ! return value for error control of netcdf routin
-    !  integer, dimension(2) :: nc_lat_vid,nc_lon_vid
     character (len=8)  :: datestring
     integer, dimension(2) :: nid
     
@@ -2065,7 +2059,6 @@ program convterr
     !  Create NetCDF file for output
     !
     print *,"Create NetCDF file for output"
-    !status = nf_create (trim(output_fname), NF_64BIT_DATA, foutid)
     status = nf_create (trim(output_fname), NF_NETCDF4, foutid)
     if (status .ne. NF_NOERR) call handle_err(status)
     !
