@@ -1213,7 +1213,7 @@ program convterr
            write(*,*) "WARNING: very small jmax_segments estimated =", seg_est
            jmax_segments = 10000
          else
-           jmax_segments = MIN(50000, seg_est)
+           jmax_segments = MIN(5000000, seg_est)
          end if
        end if
    
@@ -1227,7 +1227,7 @@ program convterr
            write(*,*) "WARNING: invalid or too small da_min_target =", da_min_target
            jmax_segments = 10000
          else
-           jmax_segments = MIN(50000, seg_est)
+           jmax_segments = MIN(5000000, seg_est)
          end if
          write(*,*) "FINAL jmax_segments =", jmax_segments
        else
