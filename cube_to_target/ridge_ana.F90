@@ -130,7 +130,7 @@ subroutine find_local_maxes ( terr_dev, ncube, nhalo, nsw_in, iopt_ridge_seed,  
 
        INTEGER (KIND=int_kind), INTENT(IN)  :: ncube, nhalo ,nsw_in
        INTEGER (KIND=int_kind), INTENT(IN)  :: iopt_ridge_seed
-       INTEGER (KIND=int_kind) :: i,j,np,ncube_halo,ipanel,N,norx,nory,ip,nhigher,npeaks
+       INTEGER (KIND=int_kind) :: i,j,np,ncube_halo,ipanel,N,ip,nhigher,npeaks
        INTEGER (KIND=int_kind) :: ipk,nblock,ijaa(2),im,jm,bloc,ivar1,ivar2,ii,jj
 
     REAL(KIND=dbl_kind), &
@@ -355,7 +355,7 @@ subroutine find_ridges ( terr_dev, terr_raw, ncube, nhalo, nsw,     &
     !
     ! Local variables
     ! 
-    INTEGER (KIND=int_kind) :: i,j,np,ncube_halo,ipanel,N,norx,nory,ip,ipk,npeaks,nswx
+    INTEGER (KIND=int_kind) :: i,j,np,ncube_halo,ipanel,N,ip,ipk,npeaks,nswx
     INTEGER (KIND=int_kind) :: ispk,jspk
     INTEGER (KIND=int_kind) :: num_iter_ridge,iter_ridge,ns0,ns1
 
@@ -673,7 +673,7 @@ end subroutine find_ridges
   real(RPX) :: THETRAD,PI,swt,ang,rotmn,rotvar,mnt,var,xmn,xvr,basmn,basvar,mn2,var2
   real(RPX) :: dyr_crest
   real(RPX) :: xspk0 , yspk0
-  integer :: i,j,l,m,n2,mini,maxi,minj,maxj,ns0,ns1,iorn(1),jj
+  integer :: i,l,m,n2,mini,maxi,minj,maxj,ns0,ns1,iorn(1),jj
   integer :: ipkh(1),ivld(1),ift0(1),ift1(1),i2,ii,ipksv(1),nswx
   integer :: ibad_left,ibad_rght
   integer :: phase
@@ -1150,7 +1150,7 @@ end subroutine THINOUT_LIST
       
       integer :: alloc_error
 
-      integer :: i,ix,iy,ip,ii,norx,nory,i_last,isubr,iip,j,ipk,npeaks
+      integer :: i,ix,iy,ii,i_last,isubr,iip,ipk,npeaks
       integer :: nswx,nrs_junk
       real(r8):: wt
       real(KIND=dbl_kind), dimension(1-nhalo:ncube+nhalo,1-nhalo:ncube+nhalo ,6) :: tmpx6
@@ -1375,7 +1375,7 @@ end subroutine THINOUT_LIST
         
       integer :: alloc_error
 
-      integer :: i,ix,iy,ip,ii,norx,nory,i_last,isubr,iip,j,ipk,npeaks
+      integer :: i,ix,iy,ip,ii,i_last,isubr,iip,ipk,npeaks
       integer :: nswx,nrs_junk
       real(r8):: wt
       !!real(KIND=dbl_kind), dimension(ncube*ncube*6) :: itrgtC, itrgxC
@@ -1628,7 +1628,7 @@ end subroutine THINOUT_LIST
         
       integer :: alloc_error
       integer :: npack,NobMin,NobMax,iir,iic,maxtiles,npeaks
-      integer :: i,ix,iy,ip,ii,norx,nory,i_last,isubr,iip,j,ipk,ir
+      integer :: i,ix,iy,ip,ii,i_last,isubr,iip,j,ipk,ir
       integer :: nswx,nrs_junk,ig,nalloc,n,ird,ThisRidge,k,nf1,nf2,IdxMin,IdxMax
       real(r8):: wt,wght
       integer,             dimension(ncube*ncube*6) :: xcoord,ycoord,pcoord
@@ -2055,7 +2055,7 @@ end subroutine THINOUT_LIST
   real(r8) :: lat22s,lon22s,a22s,b22s
   real(r8) :: To_Radians
 
-  integer  :: i,j,isubr,ipanel22
+  integer  :: i,isubr,ipanel22
   integer  :: alloc_error
 
     if ( maxval( abs( target_center_lat )) > 2.0 ) then
@@ -2263,7 +2263,7 @@ function fleshout_block ( ncube,nhalo,nsw,mxdisC,hwdthC,anglxC,rrfac ) result( a
        real(rpx), dimension(-nsw:nsw,-nsw:nsw) :: subr,subq,subdis
        real(rpx), dimension(-nsw:nsw)          :: xq,yq
        real(RPX) :: rotangl,dsq,ssq
-       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,norx,nory,nql,ncl,nhw,ipk,npeaks,jw,iw,nswx
+       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,nql,ncl,nhw,ipk,npeaks,jw,iw,nswx
 !---------------------------------------------------
 
 
@@ -2339,7 +2339,7 @@ function fleshout_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x ) 
        real(rpx), dimension(-nsw:nsw,-nsw:nsw) :: subr,subq,subdis
        real(rpx), dimension(-nsw:nsw)          :: xq,yq
        real(RPX) :: rotangl,dsq,ssq
-       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,norx,nory,nql,ncl,nhw,ipk,npeaks,jw,iw,idx1,nswx
+       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,nql,ncl,nhw,ipk,npeaks,jw,iw,idx1,nswx
 !---------------------------------------------------
 
 !===============================
@@ -2419,7 +2419,7 @@ function color_on_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x,co
        real(rpx), dimension(-nsw:nsw,-nsw:nsw) :: subr,subq,subdis,subcolo
        real(rpx), dimension(-nsw:nsw)          :: xq,yq
        real(RPX) :: rotangl,dsq,ssq
-       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,norx,nory,nql,ncl,nhw,ipk,npeaks,jw,iw,idx1,nswx
+       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,nql,ncl,nhw,ipk,npeaks,jw,iw,idx1,nswx
 !---------------------------------------------------
 
  
@@ -2512,7 +2512,7 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
        real(rpx), dimension(-nsw:nsw,-nsw:nsw) :: subblk,subblk0
        real(rpx), dimension(-nsw:nsw)          :: xq,yq
        real(RPX) :: rotangl,dsq,ssq
-       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,norx,nory,nql,ncl,nhw,ipk,npeaks,jw,iw,nswx
+       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,nql,ncl,nhw,ipk,npeaks,jw,iw,nswx
        logical :: lcrestln,lcrestwt,lblockfl,lprofifl,lbumpfl,allpixels
 !---------------------------------------------------
 

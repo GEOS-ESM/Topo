@@ -525,8 +525,7 @@ program convterr
   integer                              :: count_fallback_clipped = 0
   
   logical, allocatable :: valid_cells(:)
-  real(r8) :: dist, min_dist, dlon, dlat
-  integer :: closest, j
+  integer :: closest 
 
   
   real(r8), allocatable, dimension(:,:) :: weights_all                        !overlap weights
@@ -572,7 +571,6 @@ program convterr
   !                             
   !                             for backwards compat with CESM2.0
   !                             Not used, 0 here for naming
-  integer :: nridge_subsample = 0 !
   !
   logical :: lridgetiles = .FALSE.
   
@@ -588,7 +586,7 @@ program convterr
   integer  :: smooth_phis_numcycle=-1
   real (r8):: smoothing_scale=0
   !
-  INTEGER :: UNIT, ioptarg
+  INTEGER ::  ioptarg
   
   INTEGER :: NSCL_f, NSCL_c, nhalo,nsw
 
@@ -607,7 +605,7 @@ program convterr
   character(len=1024) :: grid_descriptor_fname,intermediate_cubed_sphere_fname,output_fname=''
   character(len=1024) :: grid_descriptor_fname_gll
   character(len=1024) :: output_grid='', ofile,smooth_topo_fname = '',str_dir=''
-  character(len=1024) :: rrfactor_fname, command_line_arguments, str, str_creator, str_source=''
+  character(len=1024) :: command_line_arguments, str, str_creator, str_source=''
 
   character(len=8)  :: date
   character(len=10) :: time
@@ -666,7 +664,6 @@ program convterr
   opts(22) = option_s( "smooth_phis_numcycle"      ,.true.    , 'l'   ,.false.       ,.false.)
   opts(23) = option_s( "smoothing_over_ocean"      ,.false.   , 'm'   ,.false.       ,.false.)
   opts(24) = option_s( "jmax_segments"             ,.true.    , 'j'   ,.false.       ,.false.)
-  opts(25) = option_s( "use_block_neighbor_search" ,.false.    , 'w'  ,.false.       ,.false.)
  
   write(*,*)'bmaa hello' 
   ! END longopts
@@ -2008,13 +2005,9 @@ program convterr
     !---ARH
     use shared_vars, only : rad2deg
     use shr_kind_mod, only: r8 => shr_kind_r8
-    use shared_vars, only : terr_uf_target, sgh_uf_target
-    use ridge_ana, only: nsubr, mxdis_target, mxvrx_target, mxvry_target, ang22_target, &
-         anglx_target, aniso_target, anixy_target, hwdth_target, wghts_target, & 
-         clngt_target, cwght_target, count_target,riseq_target,grid_length_scale, &
-         fallq_target, isovar_target
-    
-    
+    use ridge_ana, only: nsubr, mxdis_target, ang22_target,   &
+         anglx_target, aniso_target, anixy_target, hwdth_target,  & 
+         clngt_target,  riseq_target, fallq_target 
     
     implicit none
     
@@ -2053,8 +2046,6 @@ program convterr
     integer, dimension(2) :: nid
     
     real(r8), parameter :: fillvalue = 1.d36
-    character(len=1024) :: str
-    
     !
     !  Create NetCDF file for output
     !
@@ -2531,9 +2522,6 @@ program convterr
     integer, dimension(2) :: nid
     
     real(r8), parameter :: fillvalue = 1.d36
-    character(len=1024) :: str
-    
-    
     !
     !  Create NetCDF file for output
     !
@@ -3273,11 +3261,10 @@ program convterr
     REAL(R8), DIMENSION(ncube,ncube,6), INTENT(IN) :: terr_cube
     REAL(R8), DIMENSION(ntarget),       INTENT(OUT):: terr_target
     
-    REAL(R8)                           :: lat, lon
     REAL(R8), DIMENSION(1:ncube+1)     :: xgno, ygno
     
     REAL(R8) :: da, alpha, beta, piq
-    INTEGER  :: i,ip,jx,jy,nhalo
+    INTEGER  :: i,ip,jx,jy
 
 !    REAL(R8), DIMENSION(0:ncube+1,0:ncube+1,6) :: terr_cube_halo
     real(r8) :: x,y,x1,x2,y1,y2,w11,w12,w21,w22 !variables for bi-linear interpolation
@@ -3325,7 +3312,7 @@ program convterr
   !------------------------------------------------------------------------------
   SUBROUTINE CubedSphereABPFromRLL(lon, lat, alpha, beta, ipanel, ldetermine_panel)
     use shr_kind_mod, only: r8 => shr_kind_r8
-    use shared_vars, only: rotate_cube, pi, piq
+    use shared_vars, only: rotate_cube
     IMPLICIT NONE
     
     REAL    (R8), INTENT(IN)  :: lon, lat

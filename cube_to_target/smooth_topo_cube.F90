@@ -64,7 +64,7 @@ CONTAINS
     integer, INTENT(IN)  :: rrfac_max
 
     real(r8), DIMENSION(1-nhalo:ncube+nhalo, 1-nhalo:ncube+nhalo, 6) :: terr_halo
-    real(r8), DIMENSION(1-nhalo:ncube+nhalo, 1-nhalo:ncube+nhalo, 6) :: terr_halo_sm, terr_halo_dev
+    real(r8), DIMENSION(1-nhalo:ncube+nhalo, 1-nhalo:ncube+nhalo, 6) :: terr_halo_sm 
     real(r8), DIMENSION(1-nhalo:ncube+nhalo, 1-nhalo:ncube+nhalo, 6) :: da_halo, rr_halo, rr_halo_sm
     real(r8), DIMENSION(ncube,ncube,6)                               :: daxx, rrfac_sm, lap
     real(r8), allocatable :: terr_sm00(:,:,:), terr_dev00(:,:,:), rr_updt(:,:,:)  !needed for stretched grid - do_schmidt
@@ -72,15 +72,15 @@ CONTAINS
 
     real(r8), DIMENSION(ncube,ncube,6) :: landfrac_local
 
-    integer  :: ncubex, nhalox,NSCL_fx,NSCL_cx,ip
+    integer  :: ip
     real(r8) :: volterr_in,volterr_sm
      
 
-    integer  :: ncube_in_file, iter,i,j
+    integer  :: iter,i,j
 
 
     logical ::     read_in_precomputed, use_prefilter, stop_after_smoothing
-    logical ::     smooth_topo_cubesph, do_refine
+    logical ::     smooth_topo_cubesph 
     logical ::     read_in_and_refine, new_smooth_topo
 
     logical             :: do_schmidt                             ! needed for stretched grid - do_schmidt
@@ -534,14 +534,12 @@ CONTAINS
     real(r8), dimension(0:ncube+1,0:ncube+1)   :: ggaa, ggbb, ggab, ggba, sqgg !metric terms cell centers
     real(r8), dimension(0:ncube+1,0:ncube+1)   :: ggaa_e, ggbb_e, ggab_e, ggba_e, sqgg_e!metric terms edge
     real(r8), dimension(1-nhalo:ncube+nhalo,1-nhalo:ncube+nhalo,6) :: terr_halo
-    real(r8), dimension(0:ncube+2,0:ncube+2)   :: terr_halo_edgeX, terr_halo_edgeY
     real(r8)                                                       :: alph, beta
     real(r8)                                                       :: da,irho,irhosq,piq,pi
     real(r8)                                                       :: inv_da,factor
     real(r8)                                                       :: lap_x,lap_y,lap_xy,lap_yx
 
 
-    real(r8), dimension(0:ncube+2,0:ncube+2) :: xterm, yterm, xterm_edgeX, xterm_edgeY
     real(r8) :: aa,bb,cc,dd,det
 #ifdef idealized_test
     real(r8), dimension(ncube,ncube,6)  :: exact
@@ -675,7 +673,7 @@ end subroutine laplacian
     real(r8), intent(out) :: lap_psi(ncube,ncube,6)
     integer, intent(in)   :: ncube
 
-    real(r8) :: piq,da,alpha,beta,lon,lat,psi,grad_lat,grad_lon,xterm,yterm
+    real(r8) :: piq,da,alpha,beta,lon,lat,psi,grad_lon
     integer  :: i,j,ip
     piq = DATAN(1.D0)
     da = 2.0_r8*piq/DBLE(ncube)
@@ -715,21 +713,17 @@ end subroutine laplacian
     !Internal work arrays
     !-----------------------------------------------------------------
     !------------------------------
-    real(r8), DIMENSION(1-nhalo:ncube+nhalo, 1-nhalo:ncube+nhalo):: smwt,ggaa,ggbb,ggab
+    real(r8), DIMENSION(1-nhalo:ncube+nhalo, 1-nhalo:ncube+nhalo):: ggaa,ggbb,ggab
     real(r8), DIMENSION(1-nhalo:ncube+nhalo )                    :: xv,yv,alph,beta
 
-    integer:: np,i,j, ncube_halo,norx,nory,ipanel,x0,&
-         x1,y0,y1,initd,ii0,ii1,jj0,jj1,nctest,NSM,NS2,ismi,NSB,ns2x
-
+    integer:: np,i,j, ncube_halo,norx,NSM,NS2,ns2x
 
     real(r8), allocatable ::  wt1p(:,:),terr_patch(:,:)
-    real(r8)  :: cosll, dx, dy ,dbet,dalp,diss,diss00,lon_ij,lat_ij,latfactor,diss0r
+    real(r8)  ::  dbet,dalp,diss,diss00,diss0r
 
-    INTEGER :: NOCTV , isx0, isx1, jsy0, jsy1,i2,j2,iix,jjx,i00,ncube_in_file
+    INTEGER :: NOCTV ,jsy0, i2,j2,iix,jjx,i00
 
-    real(r8) :: RSM_scl, smoo,irho,volt0,volt1,volume_after,volume_before,wt1ps,diss0e
-
-    CHARACTER(len=1024) :: ofile
+    real(r8) :: RSM_scl, smoo,irho,wt1ps,diss0e
 
     LOGICAL :: do_smooth_ij
 
@@ -974,7 +968,6 @@ subroutine wrtncdf_topo_smooth_data(ncube,n,terr_sm,terr_dev,landfrac,output_fna
   integer, dimension(2) :: nid
     
   real(r8), parameter :: fillvalue = 1.d36
-  integer, dimension(1) :: latdim
   character(len=1024) :: str
   real(r8)            :: pi,piq,da,alph,beta,lon(ncube,ncube,6),lat(ncube,ncube,6)
   integer             :: i,j,ip
@@ -1145,7 +1138,7 @@ subroutine read_topo_smooth_data(fname,ncol,terr_sm,terr_dev,rr_fac)
   real(r8),dimension(ncol), intent(out) :: terr_sm,terr_dev
   real(r8),dimension(ncol), intent(out), optional :: rr_fac
 
-  integer :: ncid,status, dimid, alloc_error, terr_sm_id,terr_dev_id,ncol_file, rr_fac_id
+  integer :: ncid,status, dimid, terr_sm_id,terr_dev_id,ncol_file, rr_fac_id
 
   status = nf_open(TRIM(fname) , 0, ncid)
   IF (STATUS .NE. NF_NOERR) CALL HANDLE_ERR(STATUS)

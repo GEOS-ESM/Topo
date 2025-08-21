@@ -66,7 +66,7 @@ contains
         integer, intent(in) :: start_idx, end_idx, depth
         type(kdtree_node), pointer :: node
         
-        integer :: median_idx, split_dim, i
+        integer :: median_idx, split_dim
         
         if (start_idx > end_idx) then
             node => null()
@@ -107,7 +107,7 @@ contains
         integer, intent(inout) :: indices(:)
         integer, intent(in) :: left, right, k, dim
         
-        integer :: pivot_idx, new_pivot_idx
+        integer :: pivot_idx 
         
         if (left >= right) return
         

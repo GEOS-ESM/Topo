@@ -250,8 +250,6 @@ end function remap_field
       
       
       integer :: i,ix,iy,ip,ii
-      real(r8):: wt
-      real(r8):: ftarget(ntarget)
       integer :: ijp3(10000,3),ird
       integer (i8) :: counti
       
@@ -270,8 +268,6 @@ end function remap_field
           !
           ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix
         
-        
-          ! Note:  Factor wt/area_target(i) is fractional overlap of target and source grid
           ! cells
           !
           ijp3(ird,1) = ix
@@ -296,12 +292,9 @@ end function select_sg_field
       real(r8), intent(in) :: field(6*ncube*ncube)
       integer :: isg(6*ncube*ncube)
       
-      
+      integer :: ird 
       integer :: i,ix,iy,ip,ii
       integer (i8) :: counti
-      real(r8):: wt
-      real(r8):: ftarget(ntarget)
-      integer :: ijp3(10000,3),ird
       
       ird=1
       isg=-1
