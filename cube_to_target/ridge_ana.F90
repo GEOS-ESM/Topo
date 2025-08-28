@@ -106,21 +106,31 @@ public peak_type
 contains
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-subroutine find_local_maxes ( terr_dev, ncube, nhalo, nsw, iopt_ridge_seed )
-!------------------------------------------------
-!  INPUTS.
-!      NSW = size of window used for ridge analysis
-!      
 
-    !type (peak_type), allocatable, dimension(:), intent(out) ::  peaks
-
+subroutine find_local_maxes ( terr_dev, ncube, nhalo, nsw_in, iopt_ridge_seed,  &
+                               lregional_refinement, rr_factor )
+!---------------------------------------------------------------
+!  Supports both regular and regional-refined grids:
+!    - In regular mode, nsw is constant (nsw = nsw_in)
+!    - In refined mode, nsw is scaled by refinement factor (rr_factor)
+!
+!  Inputs:
+!    - terr_dev(ncube,ncube,6)  : Terrain deviation field
+!    - ncube                    : Cube face dimension
+!    - nhalo                    : Halo width
+!    - nsw_in                   : User-specified smoothing window (before scaling)
+!    - iopt_ridge_seed          : Ridge detection method (1 = 3x3 diff, 2 = max block)
+!    - lregional_refinement     : (optional) enable refined cap logic
+!    - rr_factor(ncube,ncube,6) : (optional) regional refinement factor (> 1 in refined zones)
+!
+!---------------------------------------------------------------
 
     REAL(KIND=dbl_kind), &
             DIMENSION(ncube,ncube,6), INTENT(IN) :: terr_dev
 
-       INTEGER (KIND=int_kind), INTENT(IN)  :: ncube, nhalo, nsw
+       INTEGER (KIND=int_kind), INTENT(IN)  :: ncube, nhalo ,nsw_in
        INTEGER (KIND=int_kind), INTENT(IN)  :: iopt_ridge_seed
-       INTEGER (KIND=int_kind) :: i,j,np,ncube_halo,ipanel,N,norx,nory,ip,nhigher,npeaks
+       INTEGER (KIND=int_kind) :: i,j,np,ncube_halo,ipanel,N,ip,nhigher,npeaks
        INTEGER (KIND=int_kind) :: ipk,nblock,ijaa(2),im,jm,bloc,ivar1,ivar2,ii,jj
 
     REAL(KIND=dbl_kind), &
@@ -142,11 +152,22 @@ subroutine find_local_maxes ( terr_dev, ncube, nhalo, nsw, iopt_ridge_seed )
     real(r8)  :: thsh
 
     CHARACTER(len=1024) :: ofile,ve
+   ! ---------- optional refinement flags ----------
+    logical,            optional       :: lregional_refinement
+    real(kind=dbl_kind),optional       :: rr_factor(:,:,:)
+    logical                             :: use_rr
+   ! ---------- local variables ----------
+    INTEGER (KIND=int_kind) :: nsw            ! adaptive window
 
 !---------------------------------------------------------------------------------------
 !  B E G I N   C A L C U L A T I O N S
 !---------------------------------------------------------------------------------------
 
+    use_rr = present(lregional_refinement) .and. lregional_refinement
+    nsw    = nsw_in
+    if (use_rr .and. present(rr_factor)) then
+       nsw = max(8, int(real(nsw_in)/maxval(rr_factor)))
+    end if
 
     DO np = 1, 6
      CALL CubedSphereFillHalo_Linear_extended(terr_dev, terr_dev_halo(:,:,np), np, ncube+1,nhalo)  
@@ -195,7 +216,6 @@ subroutine find_local_maxes ( terr_dev, ncube, nhalo, nsw, iopt_ridge_seed )
     if( iopt_ridge_seed == 2 ) then
     thsh = 10.
     bloc = MAX( 4 ,  NINT(nsw/8.) ) ! Think about floor of 4
-    !bloc = MAX( 2 ,  NINT(nsw/16.) ) ! Think about floor of 4
     allocate( aa(bloc+1,bloc+1) )
     write(*,*) " in find_local_max iopt_ridge_seed=2 "
     write(*,*) " ---> NSW , bloc ",nsw,bloc
@@ -335,7 +355,7 @@ subroutine find_ridges ( terr_dev, terr_raw, ncube, nhalo, nsw,     &
     !
     ! Local variables
     ! 
-    INTEGER (KIND=int_kind) :: i,j,np,ncube_halo,ipanel,N,norx,nory,ip,ipk,npeaks,nswx
+    INTEGER (KIND=int_kind) :: i,j,np,ncube_halo,ipanel,N,ip,ipk,npeaks,nswx
     INTEGER (KIND=int_kind) :: ispk,jspk
     INTEGER (KIND=int_kind) :: num_iter_ridge,iter_ridge,ns0,ns1
 
@@ -370,11 +390,6 @@ subroutine find_ridges ( terr_dev, terr_raw, ncube, nhalo, nsw,     &
 !----------------------------------------------------------------------------------------------------
     do_refine = .FALSE.
     if(present(lregional_refinement)) do_refine = lregional_refinement
-
-    if(do_refine) then
-      write(*,*) "regional refinement not merged - ABORT"
-      !STOP
-    end if
 
     npeaks = size( peaks% i )
    
@@ -445,13 +460,23 @@ write(*,*) " SHAPE ", shape( peaks%i )
 
       ncube_halo = size( terr_halo_r4, 1)
 
-   call alloc_ridge_qs(npeaks , NSW)
+   call alloc_ridge_qs(npeaks, NSW, lregional_refinement)
  
+   anisotropy_analysis: block
+   integer(kind=8) :: tclock1, tclock2, clock_rate
+   real(kind=8) :: elapsed_time
+   call system_clock(tclock1)
+!$omp parallel do default(none) &
+!$omp private(ipk,i,j,np,nswx,suba,subarw,subx,suby,ispk,jspk, &
+!$omp subrot) shared(npeaks,peaks,MyPanel,nsw,rdtg,do_refine, &
+!$omp rr_factor,RefFac,NSWx_diag,lregional_refinement,ncube, &
+!$omp nhalo,terr_dev_halo_r4,terr_halo_r4,xv,yv,xspk,yspk, &
+!$omp rdg_profiles_x,mxdis)
    do ipk = 1,npeaks
         i  = peaks(ipk)%i
         j  = peaks(ipk)%j
         np = peaks(ipk)%ip
-        MyPanel( ipk ) = np  ! could just write peaks%ip but WTF        
+        MyPanel( ipk ) = np  ! record panel for diagnostics        
 
 
 
@@ -462,13 +487,22 @@ write(*,*) " SHAPE ", shape( peaks%i )
         ! det(g) dependent ridge-finding window 
         nswx=  NINT( 1.*nsw / rdtg(i,j) )
 #endif
-        if(do_refine) nswx = NINT( nswx / rr_factor(i,j,np) )
-        if(do_refine) RefFac(ipk) = rr_factor(i,j,np) 
+        !--- shrink the brush on refined (Schmidt-stretched) refined faces -------
+        if (do_refine) then
+           nswx        = NINT( REAL(nswx) / rr_factor(i,j,np) )
+           RefFac(ipk) = rr_factor(i,j,np)
+        end if
 
-        !++jtb 05/26/24: Protection against too-small nswx
+        !++jtb 05/26/24: Protection against too-small nswx, never use a window smaller than 4×4
         nswx = MAX( 4 , nswx )
 
         NSWx_diag( ipk ) = nswx
+
+        !--- skip peaks whose window would step outside the halo ---------
+        if (lregional_refinement) then
+           if ( i-nswx < 1-nhalo .or. i+nswx > ncube+nhalo .or. &
+                j-nswx < 1-nhalo .or. j+nswx > ncube+nhalo ) cycle
+        end if        
 
              allocate( suba( 2*nswx+1 ,  2*nswx+1 ) )
              allocate( subarw( 2*nswx+1 ,  2*nswx+1 ) )
@@ -499,6 +533,10 @@ write(*,*) " SHAPE ", shape( peaks%i )
         write(*,903,advance='no') achar(13) , ipk, npeaks,nswx , mxdis(ipk)
  
    end do
+   call system_clock(tclock2, clock_rate)
+   elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+   print *, 'Elapsed time anisotropy analysis = ', elapsed_time, ' seconds.'
+   end block anisotropy_analysis
 
     write(*,*)
 
@@ -635,7 +673,7 @@ end subroutine find_ridges
   real(RPX) :: THETRAD,PI,swt,ang,rotmn,rotvar,mnt,var,xmn,xvr,basmn,basvar,mn2,var2
   real(RPX) :: dyr_crest
   real(RPX) :: xspk0 , yspk0
-  integer :: i,j,l,m,n2,mini,maxi,minj,maxj,ns0,ns1,iorn(1),jj
+  integer :: i,l,m,n2,mini,maxi,minj,maxj,ns0,ns1,iorn(1),jj
   integer :: ipkh(1),ivld(1),ift0(1),ift1(1),i2,ii,ipksv(1),nswx
   integer :: ibad_left,ibad_rght
   integer :: phase
@@ -1087,7 +1125,7 @@ end subroutine THINOUT_LIST
 !                      fv_0.9x1.25_nc3000_Nsw042_Nrs008_Co060_Fi001_20211102.nc
 !===========================================
 
-      use shr_kind_mod, only: r8 => shr_kind_r8
+      use shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
       use remap
       use reconstruct !, only : EquiangularAllAreas
       implicit none
@@ -1112,7 +1150,7 @@ end subroutine THINOUT_LIST
       
       integer :: alloc_error
 
-      integer :: i,ix,iy,ip,ii,counti,norx,nory,i_last,isubr,iip,j,ipk,npeaks
+      integer :: i,ix,iy,ii,i_last,isubr,iip,ipk,npeaks
       integer :: nswx,nrs_junk
       real(r8):: wt
       real(KIND=dbl_kind), dimension(1-nhalo:ncube+nhalo,1-nhalo:ncube+nhalo ,6) :: tmpx6
@@ -1126,6 +1164,7 @@ end subroutine THINOUT_LIST
       CHARACTER(len=1024) :: ofile
       character(len=8)  :: date
       character(len=10) :: time
+      integer(i8)  :: counti
 
 !----------------------------------------------------------------------------------------------------
 
@@ -1294,7 +1333,7 @@ end subroutine THINOUT_LIST
          output_grid,ldevelopment_diags,terr_dev, &
          uniqidC,uniqwgC,anisoC,anglxC,mxdisC,hwdthC,clngtC, & 
          riseqC,fallqC,mxvrxC,mxvryC,nodesC,cwghtC, &
-         itrgtC )
+         itrgtC, lregional_refinement, rr_factor )
 !==========================================
 ! Some key inputs
 !      NSW:  = 'nwindow_halfwidth' which comes from topo namelist, but should always be 
@@ -1303,16 +1342,21 @@ end subroutine THINOUT_LIST
 !                      fv_0.9x1.25_nc3000_Nsw042_Nrs008_Co060_Fi001_20211102.nc
 !===========================================
 
-      use shr_kind_mod, only: r8 => shr_kind_r8
+      use shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
       use remap
       use reconstruct !, only : EquiangularAllAreas
       implicit none
       real(r8),           intent(in) :: weights_all(jall,nreconstruction)
       integer ,           intent(in) :: weights_eul_index_all(jall,3),weights_lgr_index_all(jall)
-      integer ,           intent(in) :: ncube,jall,nreconstruction,ntarget
+      integer ,           intent(in) :: ncube,nreconstruction,ntarget
+      integer(i8),        intent(in) :: jall
       real(r8),           intent(in) :: area_target(ntarget),target_center_lon(ntarget),target_center_lat(ntarget)
       character(len=1024),intent(in) :: output_grid
       logical,            intent(in) :: ldevelopment_diags
+      logical,            optional, intent(in) :: lregional_refinement
+      real(kind=dbl_kind),optional, intent(in) :: rr_factor(:,:,:)
+      integer(i8)                              :: counti
+      logical :: use_rr
 
       integer,dimension(ncube*ncube*6),intent(out)  :: itrgtC
 
@@ -1331,7 +1375,7 @@ end subroutine THINOUT_LIST
         
       integer :: alloc_error
 
-      integer :: i,ix,iy,ip,ii,counti,norx,nory,i_last,isubr,iip,j,ipk,npeaks
+      integer :: i,ix,iy,ip,ii,i_last,isubr,iip,ipk,npeaks
       integer :: nswx,nrs_junk
       real(r8):: wt
       !!real(KIND=dbl_kind), dimension(ncube*ncube*6) :: itrgtC, itrgxC
@@ -1344,6 +1388,7 @@ end subroutine THINOUT_LIST
       character(len=10) :: time
 
 !----------------------------------------------------------------------------------------------------
+      use_rr = present(lregional_refinement) .and. lregional_refinement
 
     !!allocate ( dA(ncube,ncube),stat=alloc_error )
     CALL EquiangularAllAreas(ncube, dA)
@@ -1403,7 +1448,7 @@ end subroutine THINOUT_LIST
 !      In the following loop "counti" is the index of a piece of 
 !      the "exchange grid" - created by cutting the cubed-sphere topo
 !      and target grid into each other.  
-    do counti=1,jall
+    do counti=1_i8,jall
      
       i    = weights_lgr_index_all(counti)
 
@@ -1413,15 +1458,22 @@ end subroutine THINOUT_LIST
       !
       ! convert to 1D indexing of cubed-sphere
       !
+      if (ix<1 .or. ix>ncube .or. iy<1 .or. iy>ncube .or. ip<1 .or. ip>6) cycle
       ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix
-      wt = weights_all(counti,1)
+      if (ii<1 .or. ii>6*ncube*ncube) cycle
+      
+      wt = weights_all(counti,1) * wgt(ix,iy,ip)   ! add for stretched grid,  multiply by refinement weight
 
       iip=(iy-1)*ncube+ix
+      if (iip<1 .or. iip>ncube*ncube) cycle
 
-      itrgtC(ii) = i
-      if (mxdisC(ii) > 0.1)  itrgxC(ii) = i
-      isubr = INT( anglxC(ii) * nsubr/180. ) + 1
-      if ( (isubr >= 1).and.(isubr <= nsubr) ) then
+      isubr = max(1, min(nsubr, INT( anglxC(ii) * nsubr/180. ) + 1))
+
+      !itrgtC(ii) = i
+      !if (mxdisC(ii) > 0.1)  itrgxC(ii) = i
+      !isubr = INT( anglxC(ii) * nsubr/180. ) + 1
+      !if ( (isubr >= 1).and.(isubr <= nsubr) ) then
+      if (i>=1 .and. i<=ntarget .and. isubr>=1 .and. isubr<=nsubr) then
       wghts_target( i , isubr ) = wghts_target( i , isubr ) + wt
       hwdth_target( i , isubr ) = hwdth_target( i , isubr ) + wt*hwdthC(ii)
       mxvrx_target( i , isubr ) = mxvrx_target( i , isubr ) + wt*mxvrxC(ii)
@@ -1434,6 +1486,8 @@ end subroutine THINOUT_LIST
       count_target( i , isubr ) = count_target( i , isubr ) + wt/dA(iip)
       fallq_target( i , isubr ) = fallq_target( i , isubr ) + wt*fallqC(ii)
       riseq_target( i , isubr ) = riseq_target( i , isubr ) + wt*riseqC(ii)
+      else 
+      write(*,*) "Index out-of-bounds detected, skipping contribution:", i, isubr
       endif
 
       i_last = i
@@ -1488,7 +1542,7 @@ end subroutine THINOUT_LIST
 !      In the following loop "counti" is the index of a piece of 
 !      the "exchange grid" - created by cutting the cubed-sphere topo
 !      and target grid into each other.  
-    do counti=1,jall
+    do counti=1_i8,jall
        i    = weights_lgr_index_all(counti)
 
        ix  = weights_eul_index_all(counti,1)
@@ -1497,8 +1551,14 @@ end subroutine THINOUT_LIST
        !
        ! convert to 1D indexing of cubed-sphere
        !
+       ! Check bounds explicitly
+       if (ix<1 .or. ix>ncube .or. iy<1 .or. iy>ncube .or. ip<1 .or. ip>6) cycle
        ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix
-       wt = weights_all(counti,1)
+       if (ii<1 .or. ii>6*ncube*ncube) cycle
+       if (i<1 .or. i>ntarget) cycle       
+
+       wt = weights_all(counti,1) * wgt(ix,iy,ip)   ! add for stretched grid,  multiply by refinement weight
+
        isovar_target( i ) = isovar_target( i ) + wt*( (tempC(ii)-terr_dev(ii))**2 )/area_target(i)
     end do
     isovar_target = SQRT( isovar_target )
@@ -1521,25 +1581,40 @@ end subroutine THINOUT_LIST
        
        write(*,*) " GOT OUT OF remapridge2target "
      end if
-
-       
-  end subroutine remapridge2target
-   
+    !------------------------------------------------------------------
+    contains
+       elemental real(kind=dbl_kind) function wgt(i,j,k)
+         integer, intent(in) :: i,j,k
+     
+         if ( use_rr               &
+          & .and. present(rr_factor)               &
+          & .and. i >= 1   .and. i <= size(rr_factor,1) &
+          & .and. j >= 1   .and. j <= size(rr_factor,2) &
+          & .and. k >= 1   .and. k <= size(rr_factor,3) ) then
+     
+           wgt = max( 1.0_dbl_kind, rr_factor(i,j,k) )
+         else
+           wgt = 1.0_dbl_kind
+         end if
+       end function wgt
+    !------------------------------------------------------------------
+    end subroutine remapridge2target  
 
 !====================================
    subroutine remapridge2tiles ( ntarget,ncube,jall,nreconstruction,     &
               area_target,target_center_lon,target_center_lat,         &
               weights_eul_index_all,weights_lgr_index_all,weights_all, &
-              uniqidC,uniqwgC,itrgtC,wedgoC )
+              uniqidC,uniqwgC,itrgtC,wedgoC, lregional_refinement, rr_factor )
 
-      use shr_kind_mod, only: r8 => shr_kind_r8
+      use shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
       use remap
       use reconstruct
 
       implicit none
       real(r8),           intent(in) :: weights_all(jall,nreconstruction)
       integer ,           intent(in) :: weights_eul_index_all(jall,3),weights_lgr_index_all(jall)
-      integer ,           intent(in) :: ncube,jall,nreconstruction,ntarget
+      integer ,           intent(in) :: ncube,nreconstruction,ntarget
+      integer(i8),        intent(in) :: jall
       real(r8),           intent(in) :: area_target(ntarget),target_center_lon(ntarget),target_center_lat(ntarget)
       !character(len=1024),intent(in) :: output_grid
       !logical,            intent(in) :: ldevelopment_diags
@@ -1553,10 +1628,11 @@ end subroutine THINOUT_LIST
         
       integer :: alloc_error
       integer :: npack,NobMin,NobMax,iir,iic,maxtiles,npeaks
-      integer :: i,ix,iy,ip,ii,counti,norx,nory,i_last,isubr,iip,j,ipk,ir
+      integer :: i,ix,iy,ip,ii,i_last,isubr,iip,j,ipk,ir
       integer :: nswx,nrs_junk,ig,nalloc,n,ird,ThisRidge,k,nf1,nf2,IdxMin,IdxMax
       real(r8):: wt,wght
       integer,             dimension(ncube*ncube*6) :: xcoord,ycoord,pcoord
+      integer, allocatable, dimension(:)            :: pcoordMap  ! needed for stretched grid
       real(KIND=dbl_kind), dimension(ncube*ncube)   :: dA     
       real(KIND=dbl_kind), dimension(ncube,ncube,6) :: tempC
       integer,             dimension(ntarget)       :: ncells
@@ -1581,6 +1657,13 @@ end subroutine THINOUT_LIST
       CHARACTER(len=1024) :: ofile
       character(len=8)  :: date
       character(len=10) :: time
+      logical,            optional, intent(in) :: lregional_refinement
+      real(kind=dbl_kind),optional, intent(in) :: rr_factor(:,:,:)
+      real(r8), allocatable, dimension(:) :: wgtPack
+      logical :: use_rr
+      integer(i8)  :: counti
+
+      use_rr = present(lregional_refinement) .and. lregional_refinement
 
       CALL EquiangularAllAreas(ncube, dA)
       write(*,*) "Max target grid area   ",maxval( area_target )
@@ -1617,7 +1700,7 @@ end subroutine THINOUT_LIST
       MyCrests  = 0
       LnCrests  = 0._r8
 
-      do counti=1,jall
+      do counti=1_i8,jall
          i   = weights_lgr_index_all(counti)
          ix  = weights_eul_index_all(counti,1)
          iy  = weights_eul_index_all(counti,2)
@@ -1625,7 +1708,11 @@ end subroutine THINOUT_LIST
          !
          ! convert to 1D indexing of cubed-sphere
          !
+         if (ix<1 .or. ix>ncube .or. iy<1 .or. iy>ncube .or. ip<1 .or. ip>6) cycle
          ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix
+         if (ii<1 .or. ii>6*ncube*ncube) cycle
+         if (i<1 .or. i>ntarget) cycle         
+
          if (itrgtC(ii)==i) then
             idcoun(i)   = idcoun(i)+1
             idxmap(idcoun(i),i)= ii
@@ -1651,8 +1738,10 @@ end subroutine THINOUT_LIST
          if (npack > 0 ) then
             IdxMin  = minval(IdxPack)
             IdxMax  = maxval(IdxPack)
+            wgtPack = pack( wgt( xcoordMap, ycoordMap, pcoordMap ), (IdxOc>0) )
             do ii   = IdxMin,IdxMax
-               wght  = count( IdxPack == ii )
+               !changed to support weights for stretched grid
+               wght = sum( wgtPack, mask = (IdxPack == ii) )
                if (wght > 0) then 
                   ird=ird+1
                   MyRidges(j,ird) =  ii
@@ -1678,8 +1767,11 @@ end subroutine THINOUT_LIST
          if (npack > 0 ) then
             IdxMin  = minval(IdxPack)
             IdxMax  = maxval(IdxPack)
+            wgtPack = pack( wgt( xcoordMap, ycoordMap, pcoordMap ), (IdxOc>0) )
             do ii   = IdxMin,IdxMax
-               wght  = count( IdxPack == ii )
+               !changed to support weights for stretched grid 
+               ! orig line: wght  = count( IdxPack == ii )
+               wght = sum( wgtPack, mask = (IdxPack == ii) )
                if (wght > 0) then 
                   ird=ird+1
                   MyCrests(j,ird) =  ii
@@ -1787,7 +1879,7 @@ end subroutine THINOUT_LIST
       clext_tiles(:,:)=0._r8
 
       allocate( uniqwgMap(nalloc),uniqidMap(nalloc),xcoordMap(nalloc),ycoordMap(nalloc), &
-                wedgoMap(nalloc)  )
+                pcoordMap(nalloc),wedgoMap(nalloc)  )
 
       do j=1,ntarget
          n=NumObjects(j)
@@ -1801,6 +1893,7 @@ end subroutine THINOUT_LIST
             uniqidMap(i) = uniqidC( idxmap(i,j) )
             xcoordMap(i) = xcoord ( idxmap(i,j) )
             ycoordMap(i) = ycoord ( idxmap(i,j) )
+            pcoordMap(i) = pcoord ( idxmap(i,j) ) ! Added for stretched grid
             wedgoMap(i)  = wedgoC ( idxmap(i,j) )
          end do
          do ir=1,n
@@ -1929,8 +2022,26 @@ end subroutine THINOUT_LIST
               close(911)
 
 
-      deallocate(idxmap,idcoun,MyRidges,WtRidges,NumRidges)
+      deallocate(idxmap, idcoun, MyRidges, WtRidges, NumRidges, pcoordMap)
             write(*,*) " GOT OUT OF remapridge2tiles "
+
+    !------------------------------------------------------------------
+    contains
+      elemental real(kind=dbl_kind) function wgt(i,j,k)
+        integer, intent(in) :: i,j,k
+    
+        if ( use_rr               &
+         & .and. present(rr_factor)               &
+         & .and. i >= 1   .and. i <= size(rr_factor,1) &
+         & .and. j >= 1   .and. j <= size(rr_factor,2) &
+         & .and. k >= 1   .and. k <= size(rr_factor,3) ) then
+    
+          wgt = max( 1.0_dbl_kind, rr_factor(i,j,k) )
+        else
+          wgt = 1.0_dbl_kind
+        end if
+      end function wgt    
+      !------------------------------------------------------------------
 
   end subroutine remapridge2tiles
 !================================================================
@@ -1944,7 +2055,7 @@ end subroutine THINOUT_LIST
   real(r8) :: lat22s,lon22s,a22s,b22s
   real(r8) :: To_Radians
 
-  integer  :: i,j,isubr,ipanel22
+  integer  :: i,isubr,ipanel22
   integer  :: alloc_error
 
     if ( maxval( abs( target_center_lat )) > 2.0 ) then
@@ -2152,7 +2263,7 @@ function fleshout_block ( ncube,nhalo,nsw,mxdisC,hwdthC,anglxC,rrfac ) result( a
        real(rpx), dimension(-nsw:nsw,-nsw:nsw) :: subr,subq,subdis
        real(rpx), dimension(-nsw:nsw)          :: xq,yq
        real(RPX) :: rotangl,dsq,ssq
-       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,norx,nory,nql,ncl,nhw,ipk,npeaks,jw,iw,nswx
+       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,nql,ncl,nhw,ipk,npeaks,jw,iw,nswx
 !---------------------------------------------------
 
 
@@ -2163,7 +2274,15 @@ write(*,*) " in fleshout_block "
 !================================
   axc = 0.
 
+  fleshout_bloc: block
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
   do ip=1,6
+!$omp parallel do default(none) &
+!$omp shared(ncube,mxdisC,rrfac,AXC,ip,nsw,anglxC, &
+!$omp nhalo, hwdthC) &
+!$omp private(i,j,nswx,ipk,suba,subr,nhw,jw,rotangl,subdis,ii,jj,x0,y0)
   do j=1,ncube
   do i=1,ncube
      if(mxdisC(i,j,ip)>=1.0) then
@@ -2187,7 +2306,7 @@ write(*,*) " in fleshout_block "
                 do ii = -NSWx/2,NSWx/2
                     x0 = i ! INT( xspk(ipk) ) + 1
                     y0 = j ! INT( yspk(ipk) ) + 1
-                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
+                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
                        if ( subdis(ii,jj) >=  AXC( x0+ii, y0+jj, ip ) )  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
                     end if
                 end do
@@ -2197,6 +2316,10 @@ write(*,*) " in fleshout_block "
   end do
   write(*,*)" finished panel=",ip
   end do
+  call system_clock(tclock2, clock_rate)
+  elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+  print *, 'Elapsed time fleshout block = ', elapsed_time, ' seconds.'
+  end block fleshout_bloc
 
 end function fleshout_block
 !======================================
@@ -2216,7 +2339,7 @@ function fleshout_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x ) 
        real(rpx), dimension(-nsw:nsw,-nsw:nsw) :: subr,subq,subdis
        real(rpx), dimension(-nsw:nsw)          :: xq,yq
        real(RPX) :: rotangl,dsq,ssq
-       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,norx,nory,nql,ncl,nhw,ipk,npeaks,jw,iw,idx1,nswx
+       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,nql,ncl,nhw,ipk,npeaks,jw,iw,idx1,nswx
 !---------------------------------------------------
 
 !===============================
@@ -2225,7 +2348,15 @@ function fleshout_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x ) 
 !================================
   axc  =  0.
 
+  fleshout_prof: block
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
   do ip=1,6
+!$omp parallel do default(none) &
+!$omp shared(ncube,mxdisC,rrfac,uniqidC,shape_x,AXC,ip,nsw,anglxC, &
+!$omp psw,nhalo) &
+!$omp private(i,j,nswx,ipk,suba,subr,jw,rotangl,subdis,ii,jj,x0,y0)
   do j=1,ncube
   do i=1,ncube
      if(mxdisC(i,j,ip)>=1.0) then
@@ -2249,7 +2380,7 @@ function fleshout_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x ) 
                 do ii = -NSWx/2,NSWx/2
                     x0 = i ! INT( xspk(ipk) ) + 1
                     y0 = j ! INT( yspk(ipk) ) + 1
-                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
+                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
                        if ( (subdis(ii,jj) <= 0.).and. (AXC( x0+ii, y0+jj, ip )<=0. ) ) then
                           if ( subdis(ii,jj) <=  AXC( x0+ii, y0+jj, ip ) )  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
                        else
@@ -2263,6 +2394,10 @@ function fleshout_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x ) 
   end do
   write(*,*)" finished panel=",ip
   end do
+  call system_clock(tclock2, clock_rate)
+  elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+  print *, 'Elapsed time fleshout profi = ', elapsed_time, ' seconds.'
+  end block fleshout_prof
 
 end function fleshout_profi
 
@@ -2284,7 +2419,7 @@ function color_on_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x,co
        real(rpx), dimension(-nsw:nsw,-nsw:nsw) :: subr,subq,subdis,subcolo
        real(rpx), dimension(-nsw:nsw)          :: xq,yq
        real(RPX) :: rotangl,dsq,ssq
-       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,norx,nory,nql,ncl,nhw,ipk,npeaks,jw,iw,idx1,nswx
+       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,nql,ncl,nhw,ipk,npeaks,jw,iw,idx1,nswx
 !---------------------------------------------------
 
  
@@ -2295,7 +2430,15 @@ function color_on_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x,co
 !================================
   axc  =  0.
 
+  color_profi: block
+  integer(kind=8) :: tclock1, tclock2, clock_rate
+  real(kind=8) :: elapsed_time
+  call system_clock(tclock1)
   do ip=1,6
+!$omp parallel do default(none) &
+!$omp shared(ncube,mxdisC,rrfac,uniqidC,shape_x,AXC,BXC,ip,nsw,anglxC, &
+!$omp psw,nhalo, colors) &
+!$omp private(i,j,nswx,ipk,suba,subr,jw,rotangl,subdis,ii,jj,x0,y0, subcolo)
   do j=1,ncube
   do i=1,ncube
      if(mxdisC(i,j,ip)>=1.0) then
@@ -2323,7 +2466,7 @@ function color_on_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x,co
                 do ii = -NSWx/2,NSWx/2
                     x0 = i ! INT( xspk(ipk) ) + 1
                     y0 = j ! INT( yspk(ipk) ) + 1
-                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
+                    if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
                        if ( (subdis(ii,jj) <= 0.).and. (AXC( x0+ii, y0+jj, ip )<=0. ) ) then
                           if ( subdis(ii,jj) <=  AXC( x0+ii, y0+jj, ip ) ) then
                              AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
@@ -2343,6 +2486,10 @@ function color_on_profi ( ncube,nhalo,nsw,mxdisC,anglxC,uniqidC,rrfac,shape_x,co
   end do
   write(*,*)" finished panel=",ip
   end do
+  call system_clock(tclock2, clock_rate)
+  elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+  print *, 'Elapsed time color on profi = ', elapsed_time, ' seconds.'
+  end block color_profi
 
 end function color_on_profi
 
@@ -2365,7 +2512,7 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
        real(rpx), dimension(-nsw:nsw,-nsw:nsw) :: subblk,subblk0
        real(rpx), dimension(-nsw:nsw)          :: xq,yq
        real(RPX) :: rotangl,dsq,ssq
-       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,norx,nory,nql,ncl,nhw,ipk,npeaks,jw,iw,nswx
+       integer :: i,j,x0,x1,y0,y1,ip,ns0,ns1,ii,jj,nql,ncl,nhw,ipk,npeaks,jw,iw,nswx
        logical :: lcrestln,lcrestwt,lblockfl,lprofifl,lbumpfl,allpixels
 !---------------------------------------------------
 
@@ -2464,28 +2611,34 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
 !  is selected based the closeness of the feature center (xs,ys) to
 !  its diagnosed peak-ridgecrest location (xspk,yspk)
 !=======================================================================
+   paintridge2cub: block
+   integer(kind=8) :: tclock1, tclock2, clock_rate
+   real(kind=8) :: elapsed_time
+   call system_clock(tclock1)
   do ipk=1,npeaks
         if(mxdis(ipk)>=1.0) then
  
+            rotangl = - anglx(ipk) 
+
             if(Lcrestwt) then
                suba(:,:) = 0.
                ncl  = MIN( INT(clngth(ipk)/2) , nsw/2 )
                suba( 0 , -ncl:ncl ) = 1.        
-               rotangl = - anglx(ipk) 
+               !rotangl = - anglx(ipk) 
                subr = rotbyx( suba , 2*nsw+1, rotangl )
                subdis = subr 
              else if(Lcrestln) then
                suba(:,:) = 0.
                ncl  = MIN( INT(clngth(ipk)/2) , nsw/2 )
                suba( 0 , -ncl:ncl ) = 1.        
-               rotangl = - anglx(ipk) 
+               !rotangl = - anglx(ipk) 
                subr = rotbyx( suba , 2*nsw+1, rotangl )
                subdis = subr * axr(ipk)
              else            
                suba(:,:) = 0.
                ncl  = MIN( INT(clngth(ipk)/2) , nsw/2 )
                suba( 0 , -ncl:ncl ) = 1.        
-               rotangl = - anglx(ipk) 
+               !rotangl = - anglx(ipk) 
                subr = rotbyx( suba , 2*nsw+1, rotangl )
                subdis =  subr * axr(ipk)
              end if
@@ -2493,7 +2646,7 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
 
 #ifdef ROTATEBRUSH
              ! rotated "brush"
-             rotangl = - anglx(ipk) 
+             !rotangl = - anglx(ipk) 
              sub1 = rotbyx( sub11 , 2*nsw+1, rotangl )
 #endif
 
@@ -2524,9 +2677,12 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 y0 = INT( yspk(ipk) ) + 1  ! original, original has +1
                 !x0 = INT( xspk(ipk) )      ! why do we need +1 
                 !y0 = INT( yspk(ipk) )
-                if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
-                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
-                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  QC( x0+ii, y0+jj, ip )  = subq(ii,jj)
+                if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
+                       if ( QC( x0+ii, y0+jj, ip ) <= subq(ii,jj) )  then
+                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                          QC( x0+ii, y0+jj, ip )  = subq(ii,jj)
+                          !print '(a,9i6,2e12.4)', 'HERE  ',__LINE__, ipk, ip, x0, y0, ii,jj, peaks(ipk)%i,peaks(ipk)%j, subdis(ii,jj), subq(ii,jj)
+                       end if
                 endif
              end do
              end do
@@ -2535,7 +2691,7 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
              ! reconstruction/reconciliation based on a quality/amplitude
              ! measure in rotated rectangle (subblk)
              !------------------------------------------------------------
-             rotangl = - anglx(ipk) 
+             !rotangl = - anglx(ipk) 
              subblk0(:,:)=0.
              ncl  = MIN( INT(clngth(ipk)/2) , nsw/2 )
 
@@ -2575,9 +2731,12 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 !y0 = INT( yspk(ipk) )  
                 x0 = NINT( 1.*xspk(ipk) )      ! do we need +1 
                 y0 = NINT( 1.*yspk(ipk) )  
-                if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
-                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
-                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))   QC( x0+ii, y0+jj, ip ) = subblk(ii,jj)
+                if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
+                       if (subblk(ii,jj) >= QC( x0+ii, y0+jj, ip ))  then
+                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                          QC( x0+ii, y0+jj, ip ) = subblk(ii,jj)
+                          !print '(a,9i6,2e12.4)', 'HERE  ',__LINE__, ipk, ip, x0, y0, ii,jj, peaks(ipk)%i,peaks(ipk)%j, subdis(ii,jj), subblk(ii,jj)
+                       end if
                  endif
              end do
              end do
@@ -2590,24 +2749,32 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
                 ip = peaks(ipk)%ip
                 x0 = INT( xspk(ipk) )
                 y0 = INT( yspk(ipk) )
-                if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+ii>=1-nhalo).and.(Y0+ii<=ncube+nhalo) ) then
-                       if (subdis(ii,jj) >= AXC( x0+ii, y0+jj, ip ))  AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                if ( (x0+ii>=1-nhalo).and.(x0+ii<=ncube+nhalo).AND.(Y0+jj>=1-nhalo).and.(Y0+jj<=ncube+nhalo) ) then
+                       if (subdis(ii,jj) >= AXC( x0+ii, y0+jj, ip ))  then
+                          AXC( x0+ii, y0+jj, ip ) = subdis(ii,jj)
+                          !print '(a,9i6,2e12.4)', 'HERE  ',__LINE__, ipk, ip, x0, y0, ii,jj, peaks(ipk)%i,peaks(ipk)%j, AXC( x0+ii, y0+jj, ip ), subdis(ii,jj)
+                       end if
                  endif
              end do
              end do
              end if
           end if
       end do
+   call system_clock(tclock2, clock_rate)
+   elapsed_time = real(tclock2 - tclock1, kind=8) / real(clock_rate, kind=8)
+   print *, 'Elapsed time paintridge2cube = ', elapsed_time, ' seconds.'
+   end block paintridge2cub
 
-     write(*,*) " finished paintridge2cube "
+  write(*,*) " finished paintridge2cube "
      
   end function paintridge2cube
  !==================================================================
 
- subroutine alloc_ridge_qs (npeaks , NSW )
+ subroutine alloc_ridge_qs (npeaks , NSW , lregional_refinement)
 
   integer, intent(in) :: npeaks
   integer, intent(in) :: NSW
+  logical, optional, intent(in) :: lregional_refinement ! needed for stretched grid
 
   allocate( xs(npeaks) )
   allocate( ys(npeaks) )
@@ -2699,6 +2866,28 @@ function paintridge2cube ( axr, ncube,nhalo,nsw, lzerovalley, crest_length, cres
   !PSW = nsw
   ! Set for ridge-finding w/ det(g) dependent window
   PSW = NINT ( 3.*nsw / 2.)
+
+  !------------------------------------------------------------------------------
+  ! CAP PSW FOR STRETCHED GRIDS:
+  ! Stretched grids (e.g., C540) can trigger excessively large PSW values,
+  ! which lead to huge temporary arrays (e.g., suba(2*PSW+1, 2*PSW+1)) being
+  ! allocated per ridge peak. This can easily blow up memory usage.
+  !
+  ! Empirically, C270 and C2160 stretched grids worked with PSW < 128.
+  ! 128 was chosen as a safe upper bound that:
+  !   - Preserves stability (avoids segfaults)
+  !   - Allows sufficient ridge detail
+  !   - Matches behavior in already working configs
+  !
+  ! This cap can be revisited if larger ridges need to be supported,
+  ! but may require additional memory tuning.
+  !------------------------------------------------------------------------------
+   IF (PRESENT(lregional_refinement)) THEN
+      IF (lregional_refinement .AND. PSW > 128) THEN
+         WRITE(*,*) "NOTE: Capping PSW for stretched grid: original =", PSW, "capped to = 128"
+         PSW = 128
+      END IF
+   END IF
 
   allocate( rdg_profiles( PSW+1, npeaks ) )
        rdg_profiles(:,:)=0.d+0

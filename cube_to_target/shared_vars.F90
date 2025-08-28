@@ -313,7 +313,7 @@ end subroutine read_intermediate_cubed_sphere_grid
 
 
 subroutine read_target_grid(grid_descriptor_fname,lregional_refinement,ltarget_latlon,lpole,nlat,nlon,ntarget,ncorner,nrank,&
-     target_corner_lon, target_corner_lat, target_center_lon, target_center_lat, target_area, target_rrfac)
+     target_corner_lon, target_corner_lat, target_center_lon, target_center_lat, target_area, target_rrfac, grid_fallback_mask)
   implicit none
 #     include         <netcdf.inc>
   character(len=1024), intent(in) :: grid_descriptor_fname
@@ -323,12 +323,13 @@ subroutine read_target_grid(grid_descriptor_fname,lregional_refinement,ltarget_l
   real(r8), allocatable, dimension(:,:), intent(out) :: target_corner_lon, target_corner_lat
   real(r8), allocatable, dimension(:)  , intent(out) :: target_center_lon, target_center_lat, target_area
   real(r8), allocatable, dimension(:)  , intent(out) :: target_rrfac
+  integer , allocatable, dimension(:)  , intent(out) :: grid_fallback_mask
 
 
   integer :: ncid,status
   integer :: ntarget_id, ncorner_id, nrank_id, nodeCount_id,nodeCoords_id,elementConn_id,numElementConn_id,centerCoords_id
   integer :: alloc_error
-  integer :: lonid, latid,nodeCount
+  integer :: lonid, latid,nodeCount, i
 
   real(r8), allocatable, dimension(:,:):: centerCoords,nodeCoords
   integer,  allocatable, dimension(:,:):: elementConn
@@ -341,6 +342,7 @@ subroutine read_target_grid(grid_descriptor_fname,lregional_refinement,ltarget_l
   integer            :: esmf_file = 1 ! =1 SCRIP naming convention; =2 ESMF naming convention
   integer            :: icorner,icell,num
   integer            :: grid_dims(2)
+
 
   ltarget_latlon = .FALSE.
   !
@@ -495,16 +497,39 @@ subroutine read_target_grid(grid_descriptor_fname,lregional_refinement,ltarget_l
 
     IF (STATUS .NE. NF_NOERR) CALL HANDLE_ERR(STATUS)
     IF (maxval(target_corner_lat)>10.0) target_corner_lat = deg2rad*target_corner_lat    
+
+    ! Immediately after reading from netCDF
+    write(*,*) "Verifying target_corner_lon/lat loaded from file"
+    do icell = 1, ntarget
+        if (all(target_corner_lon(:,icell) == 0.0_r8) .and. all(target_corner_lat(:,icell) == 0.0_r8)) then
+            write(*,*) "CRITICAL ERROR: Cell corners all zero at index", icell
+            stop "Failed netCDF load"
+        endif
+    enddo
+    
     !
     ! for writing remapped data on file at the end of the program
     !    
     status = NF_INQ_VARID(ncid, 'grid_center_lon', lonid)
+    if (status /= NF_NOERR) CALL HANDLE_ERR(status)
     status = NF_GET_VAR_DOUBLE(ncid, lonid,target_center_lon)
+    IF (status /= NF_NOERR) CALL HANDLE_ERR(status)
     IF (maxval(target_center_lon)>10.0) target_center_lon = deg2rad*target_center_lon    
-    
+
     status = NF_INQ_VARID(ncid, 'grid_center_lat', latid)
+    if (status /= NF_NOERR) CALL HANDLE_ERR(status)
     status = NF_GET_VAR_DOUBLE(ncid, latid,target_center_lat)
+    IF (status /= NF_NOERR) CALL HANDLE_ERR(status)
     IF (maxval(target_center_lat)>10.0) target_center_lat = deg2rad*target_center_lat    
+
+    ! Immediately after reading center coordinates
+    write(*,*) "Diagnostic check for target_center_lon/lat:"
+    do icell = 1, min(5, ntarget)
+        write(*,*) "Cell:", icell, &
+            " Lon:", target_center_lon(icell), &
+            " Lat:", target_center_lat(icell)
+    enddo    
+    
     if (ltarget_latlon) then
       if (maxval(target_center_lat)>pih-1E-5) then
         lpole=.true.
@@ -529,14 +554,61 @@ subroutine read_target_grid(grid_descriptor_fname,lregional_refinement,ltarget_l
   else
     lregional_refinement = .true.
     allocate ( target_rrfac(ntarget),stat=alloc_error)
+    IF (alloc_error /= 0) STOP "Allocation failed for target_rrfac"
     status = NF_GET_VAR_DOUBLE(ncid, rrfacid,target_rrfac)
     IF (STATUS .NE. NF_NOERR) CALL HANDLE_ERR(STATUS)
     write(*,*) "rrfac on file; setting lregional_refinement = .true."
   end if
 
   status = NF_INQ_VARID(ncid, TRIM(str_area(esmf_file)), latid)
+  IF (status /= NF_NOERR) CALL HANDLE_ERR(status)
   status = NF_GET_VAR_DOUBLE(ncid, latid,target_area)
+
+  ! After reading target_area
+  write(*,*) "target_area min/max after reading:", &
+             minval(target_area), maxval(target_area)
   
+  ! Safeguard against invalid (negative or zero) areas
+  do i = 1, size(target_area)
+      if (target_area(i) <= 0.0_r8) then
+          target_area(i) = 1e-12_r8
+      endif
+  end do
+  
+  ! Confirm safeguard worked
+  write(*,*) "target_area min/max after safeguard:", &
+             minval(target_area), maxval(target_area)
+
+  IF (status /= NF_NOERR) CALL HANDLE_ERR(status)
+
+  !---------------------------------------------------------------------------
+  ! Read fallback mask from target grid NetCDF descriptor.
+  !
+  ! This mask (grid_fallback_mask) identifies cells where the remapping
+  ! geometry is invalid (e.g., zero or negative area in SCRIP grid). These
+  ! cells are treated with special fallback logic during terrain assignment.
+  !
+  ! The mask is used downstream to avoid using unreliable terrain values
+  ! and to fill affected cells with nearby valid terrain, ensuring smoother,
+  ! more physically consistent elevation fields especially in stretched grids.
+  !---------------------------------------------------------------------------    
+  allocate(grid_fallback_mask(ntarget), stat=alloc_error)
+  if (alloc_error /= 0) stop "Allocation failed for grid_fallback_mask"
+
+  status = NF_INQ_VARID(ncid, 'grid_fallback_mask', latid)
+  if (status == NF_NOERR) then
+     status = NF_GET_VAR_INT(ncid, latid, grid_fallback_mask)
+     if (status /= NF_NOERR) call handle_err(status)
+  else
+    write(*,*) "grid_fallback_mask not found; initializing to 0"
+    grid_fallback_mask = 0
+  end if
+
+ ! Diagnostic print for grid_fallback_mask
+  write(*,*) "grid_fallback_mask min/max after reading:", &
+            minval(grid_fallback_mask), maxval(grid_fallback_mask), &
+            " total fallback cells:", count(grid_fallback_mask == 1) 
+
   status = nf_close (ncid)
   if (status .ne. NF_NOERR) call handle_err(status)          
   end subroutine read_target_grid
