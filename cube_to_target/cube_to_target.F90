@@ -2046,6 +2046,8 @@ program convterr
     integer, dimension(2) :: nid
     
     real(r8), parameter :: fillvalue = 1.d36
+    real(r8), allocatable :: sgh_sd(:), sgh30_sd(:)
+    real(r8) :: min_sgh, max_sgh, min_sgh30, max_sgh30
     !
     !  Create NetCDF file for output
     !
@@ -2184,184 +2186,153 @@ program convterr
       
     endif
     
-    
-    
-    !
     ! Create attributes for output variables
     !
-    status = nf_put_att_text (foutid,terrid,'long_name', 21, 'surface geopotential')
-    status = nf_put_att_text (foutid,terrid,'units', 5, 'm2/s2')
+    ! --- PHIS ---
+    status = nf_put_att_text (foutid, terrid, 'long_name', LEN_TRIM('surface geopotential'), 'surface geopotential')
+    status = nf_put_att_text (foutid, terrid, 'units',     LEN_TRIM('m2/s2'),               'm2/s2')
     status = nf_put_att_double (foutid, terrid, 'missing_value', nf_double, 1, fillvalue)
-    status = nf_put_att_double (foutid, terrid, '_FillValue'   , nf_double, 1, fillvalue)
-    !        status = nf_put_att_text (foutid,terrid,'filter', 35, 'area averaged from USGS 30-sec data')
+    status = nf_put_att_double (foutid, terrid, '_FillValue',    nf_double, 1, fillvalue)
+    
+    ! --- rrfac (dimensionless) ---
     if (lwrite_rrfac_to_topo_file) then
-      status = nf_put_att_text (foutid,rrfacid,'long_name', 17, 'refinement factor')
-      status = nf_put_att_text (foutid,rrfacid,'units', 0, '')
+      status = nf_put_att_text (foutid, rrfacid, 'long_name', LEN_TRIM('refinement factor'), 'refinement factor')
+      status = nf_put_att_text (foutid, rrfacid, 'units',     0, '')  ! dimensionless
       status = nf_put_att_double (foutid, rrfacid, 'missing_value', nf_double, 1, fillvalue)
-      status = nf_put_att_double (foutid, rrfacid, '_FillValue'   , nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, rrfacid, '_FillValue',    nf_double, 1, fillvalue)
     end if
     
+    ! --- SGH & SGH30 (std dev, meters) ---
     status = nf_put_att_double (foutid, sghid, 'missing_value', nf_double, 1, fillvalue)
-    status = nf_put_att_double (foutid, sghid, '_FillValue'   , nf_double, 1, fillvalue)
-    status = nf_put_att_text   (foutid, sghid, 'long_name' , 48, &
-         'standard deviation of 3km cubed-sphere elevation and target grid elevation')
-    status = nf_put_att_text   (foutid, sghid, 'units'     , 1, 'm')
-    !        status = nf_put_att_text   (foutid, sghid, 'filter'    , 4, 'none')
+    status = nf_put_att_double (foutid, sghid, '_FillValue',    nf_double, 1, fillvalue)
+    status = nf_put_att_text   (foutid, sghid, 'long_name', LEN_TRIM('standard deviation of 3km cubed-sphere elevation and target grid elevation'), &
+                                                   'standard deviation of 3km cubed-sphere elevation and target grid elevation')
+    status = nf_put_att_text   (foutid, sghid, 'units',     LEN_TRIM('m'), 'm')
     
     status = nf_put_att_double (foutid, sgh30id, 'missing_value', nf_double, 1, fillvalue)
-    status = nf_put_att_double (foutid, sgh30id, '_FillValue'   , nf_double, 1, fillvalue)
-    status = nf_put_att_text   (foutid, sgh30id, 'long_name' , 49, &
-         'standard deviation of 30s elevation from 3km cubed-sphere cell average height')
-    status = nf_put_att_text   (foutid, sgh30id, 'units'     , 1, 'm')
-    !        status = nf_put_att_text   (foutid, sgh30id, 'filter'    , 4, 'none')
+    status = nf_put_att_double (foutid, sgh30id, '_FillValue',    nf_double, 1, fillvalue)
+    status = nf_put_att_text   (foutid, sgh30id, 'long_name', LEN_TRIM('standard deviation of 30s elevation from 3km cubed-sphere cell average height'), &
+                                                   'standard deviation of 30s elevation from 3km cubed-sphere cell average height')
+    status = nf_put_att_text   (foutid, sgh30id, 'units',     LEN_TRIM('m'), 'm')
     
+    ! --- LANDM_COSLAT (dimensionless) ---
     status = nf_put_att_double (foutid, landm_coslatid, 'missing_value', nf_double, 1, fillvalue)
-    status = nf_put_att_double (foutid, landm_coslatid, '_FillValue'   , nf_double, 1, fillvalue)
-    status = nf_put_att_text   (foutid, landm_coslatid, 'long_name' , 23, 'smoothed land fraction')
-    status = nf_put_att_text   (foutid, landm_coslatid, 'filter'    , 4, 'none')
+    status = nf_put_att_double (foutid, landm_coslatid, '_FillValue',    nf_double, 1, fillvalue)
+    status = nf_put_att_text   (foutid, landm_coslatid, 'long_name', LEN_TRIM('smoothed land fraction'), 'smoothed land fraction')
+    status = nf_put_att_text   (foutid, landm_coslatid, 'filter',    LEN_TRIM('none'), 'none')
+    status = nf_put_att_text   (foutid, landm_coslatid, 'units',     LEN_TRIM('1'), '1')
+    
+    ! --- LANDFRAC (if present, dimensionless) ---
     if (llandfrac) then
-      !+++ARH  
       status = nf_put_att_double (foutid, landfracid, 'missing_value', nf_double, 1, fillvalue)
-      status = nf_put_att_double (foutid, landfracid, '_FillValue'   , nf_double, 1, fillvalue)
-      status = nf_put_att_text   (foutid, landfracid, 'long_name', 21, 'gridbox land fraction')
-      !!        status = nf_put_att_text   (foutid, landfracid, 'filter', 40, 'area averaged from 30-sec USGS raw data')
-      !---ARH  
+      status = nf_put_att_double (foutid, landfracid, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, landfracid, 'long_name', LEN_TRIM('gridbox land fraction'), 'gridbox land fraction')
+      status = nf_put_att_text   (foutid, landfracid, 'units',     LEN_TRIM('1'), '1')
     end if
     
+    ! --- area (solid angle) ---
     status = nf_put_att_double (foutid, areaid, 'missing_value', nf_double, 1, fillvalue)
-    status = nf_put_att_double (foutid, areaid, '_FillValue'   , nf_double, 1, fillvalue)
-    status = nf_put_att_text   (foutid, areaid, 'long_name' , 24, &
-         'area of target grid cell')
-    status = nf_put_att_text   (foutid, areaid, 'units'     , 1, 'm+2')
+    status = nf_put_att_double (foutid, areaid, '_FillValue',    nf_double, 1, fillvalue)
+    status = nf_put_att_text   (foutid, areaid, 'long_name', LEN_TRIM('angular area of target grid cell'), 'angular area of target grid cell')
+    status = nf_put_att_text   (foutid, areaid, 'units',     LEN_TRIM('sr'), 'sr')    
     
-    status = nf_put_att_double (foutid, isovarid, 'missing_value', nf_double, 1, fillvalue)
-    status = nf_put_att_double (foutid, isovarid, '_FillValue'   , nf_double, 1, fillvalue)
-    status = nf_put_att_text   (foutid, isovarid, 'long_name' , 30, &
-         'residual variance after ridges')
-    status = nf_put_att_text   (foutid, isovarid, 'units'     , 1, 'm+2')
-
-    status = nf_put_att_text (foutid,latvid,'long_name', 8, 'latitude')
-    if (status .ne. NF_NOERR) call handle_err(status)
-    status = nf_put_att_text (foutid,latvid,'units', 13, 'degrees_north')
-    if (status .ne. NF_NOERR) call handle_err(status)
-    !        status = nf_put_att_text (foutid,latvid,'units', 21, 'cell center locations')
-    !        if (status .ne. NF_NOERR) call handle_err(status)
+    ! --- lat/lon ---
+    status = nf_put_att_text (foutid, latvid, 'long_name', LEN_TRIM('latitude'),      'latitude')
+    status = nf_put_att_text (foutid, latvid, 'units',     LEN_TRIM('degrees_north'), 'degrees_north')
+    status = nf_put_att_text (foutid, lonvid, 'long_name', LEN_TRIM('longitude'),     'longitude')
+    status = nf_put_att_text (foutid, lonvid, 'units',     LEN_TRIM('degrees_east'),  'degrees_east')
     
-    status = nf_put_att_text (foutid,lonvid,'long_name', 9, 'longitude')
-    if (status .ne. NF_NOERR) call handle_err(status)
-    status = nf_put_att_text (foutid,lonvid,'units', 12, 'degrees_east')
-    if (status .ne. NF_NOERR) call handle_err(status)
-    !        status = nf_put_att_text (foutid,lonvid,'units' , 21, 'cell center locations')
-    !        if (status .ne. NF_NOERR) call handle_err(status)
-
-    if (Lfind_ridges) then 
-       ThisId = mxdisid
-       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-       status = nf_put_att_double (foutid, ThisId, '_FillValue'   , nf_double, 1, fillvalue)
-       status = nf_put_att_text   (foutid, ThisId, 'long_name' , 48, &
-       'Obtsacle height diagnosed by ridge-finding alg. ')
-       status = nf_put_att_text   (foutid, ThisId, 'units'     , 1, 'm')
-       status = nf_put_att_text   (foutid, ThisId, 'filter'    , 4, 'none')
-
-       ThisId = riseqid
-       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-       status = nf_put_att_double (foutid, ThisId, '_FillValue'   , nf_double, 1, fillvalue)
-       status = nf_put_att_text   (foutid, ThisId, 'long_name' , 38, &
-       'Rise to peak from left (ridge_finding)')
-       !12345678901234567890123456789012345678901234567890
-       !         10        20        30        40        
-       status = nf_put_att_text   (foutid, ThisId, 'units'     , 1, 'm')
-       status = nf_put_att_text   (foutid, ThisId, 'filter'    , 4, 'none')
-
-       ThisId = fallqid
-       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-       status = nf_put_att_double (foutid, ThisId, '_FillValue'   , nf_double, 1, fillvalue)
-       status = nf_put_att_text   (foutid, ThisId, 'long_name' , 43, &
-       'Fall from peak toward right (ridge_finding)')
-       !12345678901234567890123456789012345678901234567890
-       !         10        20        30        40        
-       status = nf_put_att_text   (foutid, ThisId, 'units'     , 1, 'm')
-       status = nf_put_att_text   (foutid, ThisId, 'filter'    , 4, 'none')
-
-       ThisId = ang22id
-       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-       status = nf_put_att_double (foutid, ThisId, '_FillValue'   , nf_double, 1, fillvalue)
-       status = nf_put_att_text   (foutid, ThisId, 'long_name' , 48, &
-       'Ridge orientation clockwise from true north     ')
-       !12345678901234567890123456789012345678901234567890
-       !         10        20        30        40        
-       status = nf_put_att_text   (foutid, ThisId, 'units'     , 7, 'degrees')
-       status = nf_put_att_text   (foutid, ThisId, 'filter'    , 4, 'none')
-
-       ThisId = anglxid
-       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-       status = nf_put_att_double (foutid, ThisId, '_FillValue'   , nf_double, 1, fillvalue)
-       status = nf_put_att_text   (foutid, ThisId, 'long_name' , 61, &
-       'Ridge orientation clockwise from b-axis in cubed sphere panel')
-       !1234567890123456789012345678901234567890123456789012345678901
-       !         10        20        30        40        50        60
-       status = nf_put_att_text   (foutid, ThisId, 'units'     , 7, 'degrees')
-       status = nf_put_att_text   (foutid, ThisId, 'filter'    , 4, 'none')
-
-       ThisId = hwdthid
-       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-       status = nf_put_att_double (foutid, ThisId, '_FillValue'   , nf_double, 1, fillvalue)
-       status = nf_put_att_text   (foutid, ThisId, 'long_name' , 21, &
-       'Estimated Ridge width')
-       !12345678901234567890123456789012345678901234567890
-       !         10        20        30        40        
-       status = nf_put_att_text   (foutid, ThisId, 'units'     , 2, 'km')
-       status = nf_put_att_text   (foutid, ThisId, 'filter'    , 4, 'none')
-
-       ThisId = clngtid
-       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-       status = nf_put_att_double (foutid, ThisId, '_FillValue'   , nf_double, 1, fillvalue)
-       status = nf_put_att_text   (foutid, ThisId, 'long_name' , 34, &
-       'Estimated Ridge length along crest')
-       !12345678901234567890123456789012345678901234567890
-       !         10        20        30        40        
-       status = nf_put_att_text   (foutid, ThisId, 'units'     , 2, 'km')
-       status = nf_put_att_text   (foutid, ThisId, 'filter'    , 4, 'none')
-
-       ThisId = anixyid
-       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-       status = nf_put_att_double (foutid, ThisId, '_FillValue'   , nf_double, 1, fillvalue)
-       status = nf_put_att_text   (foutid, ThisId, 'long_name' , 42, &
-       'Variance ratio: cross/(cross+length) -wise')
-       !12345678901234567890123456789012345678901234567890
-       !         10        20        30        40        
-       status = nf_put_att_text   (foutid, ThisId, 'units'     , 1, '1')
-       status = nf_put_att_text   (foutid, ThisId, 'filter'    , 4, 'none')
-
-       ThisId = anisoid
-       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-       status = nf_put_att_double (foutid, ThisId, '_FillValue'   , nf_double, 1, fillvalue)
-       status = nf_put_att_text   (foutid, ThisId, 'long_name' , 36, &
-       'Variance fraction explained by ridge')
-       !12345678901234567890123456789012345678901234567890
-       !         10        20        30        40        
-       status = nf_put_att_text   (foutid, ThisId, 'units'     , 1, '1')
-       status = nf_put_att_text   (foutid, ThisId, 'filter'    , 4, 'none')
-
-       ThisId = isovarid
-       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-       status = nf_put_att_double (foutid, ThisId, '_FillValue'   , nf_double, 1, fillvalue)
-       status = nf_put_att_text   (foutid, ThisId, 'long_name' , 50, &
-       'SQRT(Variance) from topo NOT represented by ridges')
-       !12345678901234567890123456789012345678901234567890
-       !         10        20        30        40        
-       status = nf_put_att_text   (foutid, ThisId, 'units'     , 1, '1')
-       status = nf_put_att_text   (foutid, ThisId, 'filter'    , 4, 'none')
-
-       ThisId=gbxarid
-       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-       status = nf_put_att_double (foutid, ThisId, '_FillValue'   , nf_double, 1, fillvalue)
-       status = nf_put_att_text   (foutid, ThisId, 'long_name' , 46, &
-       'angular area of target grid cell from scheme')
-       !12345678901234567890123456789012345678901234
-       !              10        20        30        40
-       status = nf_put_att_text   (foutid, ThisId, 'units'     , 7, 'm+2 m-2')
-       status = nf_put_att_text   (foutid, ThisId, 'filter'    , 4, 'none')
+    ! --- Ridge diagnostics (only when Lfind_ridges) ---
+    if (Lfind_ridges) then
+      ! MXDIS (m)
+      ThisId = mxdisid
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, ThisId, 'long_name', 48, 'Obtsacle height diagnosed by ridge-finding alg. ')
+      status = nf_put_att_text   (foutid, ThisId, 'units',      1, 'm')
+      status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
+    
+      ! RISEQ (m)
+      ThisId = riseqid
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, ThisId, 'long_name', 38, 'Rise to peak from left (ridge_finding)')
+      status = nf_put_att_text   (foutid, ThisId, 'units',      1, 'm')
+      status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
+    
+      ! FALLQ (m)
+      ThisId = fallqid
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, ThisId, 'long_name', 43, 'Fall from peak toward right (ridge_finding)')
+      status = nf_put_att_text   (foutid, ThisId, 'units',      1, 'm')
+      status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
+    
+      ! ANGLL (deg)
+      ThisId = ang22id
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, ThisId, 'long_name', 48, 'Ridge orientation clockwise from true north     ')
+      status = nf_put_att_text   (foutid, ThisId, 'units',      7, 'degrees')
+      status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
+    
+      ! ANGLX (deg)
+      ThisId = anglxid
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, ThisId, 'long_name', 61, 'Ridge orientation clockwise from b-axis in cubed sphere panel')
+      status = nf_put_att_text   (foutid, ThisId, 'units',      7, 'degrees')
+      status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
+    
+      ! HWDTH (m)
+      ThisId = hwdthid
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, ThisId, 'long_name', 21, 'Estimated Ridge width')
+      status = nf_put_att_text   (foutid, ThisId, 'units',      1, 'm')
+      status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
+    
+      ! CLNGT (m)
+      ThisId = clngtid
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, ThisId, 'long_name', 34, 'Estimated Ridge length along crest')
+      status = nf_put_att_text   (foutid, ThisId, 'units',      1, 'm')
+      status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
+    
+      ! ANIXY (dimensionless)
+      ThisId = anixyid
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, ThisId, 'long_name', 42, 'Variance ratio: cross/(cross+length) -wise')
+      status = nf_put_att_text   (foutid, ThisId, 'units',      1, '1')
+      status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
+    
+      ! ANISO (dimensionless)
+      ThisId = anisoid
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, ThisId, 'long_name', 36, 'Variance fraction explained by ridge')
+      status = nf_put_att_text   (foutid, ThisId, 'units',      1, '1')
+      status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
+    
+      ! ISOVAR (std dev after ridges, meters)
+      ThisId = isovarid
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, ThisId, 'long_name', LEN_TRIM('SQRT(Variance) from topo NOT represented by ridges'), &
+                                                 'SQRT(Variance) from topo NOT represented by ridges')
+      status = nf_put_att_text   (foutid, ThisId, 'units',     LEN_TRIM('m'), 'm')
+      status = nf_put_att_text   (foutid, ThisId, 'filter',    LEN_TRIM('none'), 'none')
+    
+      ! GBXAR (solid angle, steradian)
+      ThisId = gbxarid
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, ThisId, 'long_name', LEN_TRIM('angular area of target grid cell from scheme'), &
+                                                 'angular area of target grid cell from scheme')
+      status = nf_put_att_text   (foutid, ThisId, 'units',     LEN_TRIM('sr'), 'sr')
+      status = nf_put_att_text   (foutid, ThisId, 'filter',    LEN_TRIM('none'), 'none')
     end if
 
     call wrt_cesm_meta_data(foutid,command_line_arguments,str_creator)
@@ -2396,15 +2367,45 @@ program convterr
       print*,"done writing landfrac data"
       !---ARH  
     end if
-    print*,"writing sgh data",MINVAL(sgh),MAXVAL(sgh)
-    status = nf_put_var_double (foutid, sghid, sgh)
-    if (status .ne. NF_NOERR) call handle_err(status)
-    print*,"done writing sgh data"
+!===============================================================
+    ! Convert variance -> standard deviation only for output
+
+    allocate(sgh_sd(n), sgh30_sd(n))
     
-    print*,"writing sgh30 data",MINVAL(sgh30),MAXVAL(sgh30)
-    status = nf_put_var_double (foutid, sgh30id, sgh30)
-    if (status .ne. NF_NOERR) call handle_err(status)
-    print*,"done writing sgh30 data"
+    sgh_sd    = sgh
+    sgh30_sd  = sgh30
+    
+    ! guard: don’t sqrt missing (≈1e36) or negatives
+    where (sgh_sd    >= 0.d0 .and. sgh_sd    < 0.9d36)
+      sgh_sd    = sqrt(sgh_sd)
+    elsewhere
+      sgh_sd    = fillvalue
+    end where
+    
+    where (sgh30_sd  >= 0.d0 .and. sgh30_sd  < 0.9d36)
+      sgh30_sd  = sqrt(sgh30_sd)
+    elsewhere
+      sgh30_sd  = fillvalue
+    end where
+    
+    ! min/max ignoring fill
+    min_sgh    = MINVAL(sgh_sd,   MASK = sgh_sd   < 0.9d36)
+    max_sgh    = MAXVAL(sgh_sd,   MASK = sgh_sd   < 0.9d36)
+    min_sgh30  = MINVAL(sgh30_sd, MASK = sgh30_sd < 0.9d36)
+    max_sgh30  = MAXVAL(sgh30_sd, MASK = sgh30_sd < 0.9d36)
+
+     print *, "writing sgh data (std dev, m): ", min_sgh, max_sgh
+     status = nf_put_var_double(foutid, sghid, sgh_sd)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print *, "done writing sgh data"
+     
+     print *, "writing sgh30 data (std dev, m): ", min_sgh30, max_sgh30
+     status = nf_put_var_double(foutid, sgh30id, sgh30_sd)
+     if (status .ne. NF_NOERR) call handle_err(status)
+     print *, "done writing sgh30 data"
+     
+     deallocate(sgh_sd, sgh30_sd)    
+!===============================================================
     
     print*,"writing landm_coslat data",MINVAL(landm_coslat),MAXVAL(landm_coslat)
     status = nf_put_var_double (foutid, landm_coslatid, landm_coslat)
@@ -2695,6 +2696,8 @@ program convterr
     real(r8),dimension(n) :: terr, landfrac,sgh,sgh30,landm_coslat
     !---ARH
     integer :: i,j
+    real(r8), allocatable :: sgh_sd(:), sgh30_sd(:)
+    real(r8) :: min_sgh, max_sgh, min_sgh30, max_sgh30
     
     IF (nlon*nlat.NE.n) THEN
       WRITE(*,*) "inconsistent input for wrtncdf_rll"
@@ -3036,15 +3039,45 @@ program convterr
       !---ARH  
     end if
 
-    print*,"writing sgh data",MINVAL(sgh),MAXVAL(sgh)
-    status = nf_put_var_double (foutid, sghid, sgh)
+    !===============================================================
+    ! Convert variance -> standard deviation only for output
+
+    allocate(sgh_sd(n), sgh30_sd(n))
+
+    sgh_sd    = sgh
+    sgh30_sd  = sgh30
+
+    ! guard: don’t sqrt missing (~1e36) or negatives
+    where (sgh_sd    >= 0.d0 .and. sgh_sd    < 0.9d36)
+      sgh_sd    = sqrt(sgh_sd)
+    elsewhere
+      sgh_sd    = fillvalue
+    end where
+
+    where (sgh30_sd  >= 0.d0 .and. sgh30_sd  < 0.9d36)
+      sgh30_sd  = sqrt(sgh30_sd)
+    elsewhere
+      sgh30_sd  = fillvalue
+    end where
+
+    ! min/max ignoring fill (for logging only)
+    min_sgh    = MINVAL(sgh_sd,   MASK = sgh_sd   < 0.9d36)
+    max_sgh    = MAXVAL(sgh_sd,   MASK = sgh_sd   < 0.9d36)
+    min_sgh30  = MINVAL(sgh30_sd, MASK = sgh30_sd < 0.9d36)
+    max_sgh30  = MAXVAL(sgh30_sd, MASK = sgh30_sd < 0.9d36)
+
+    print *, "writing sgh data (std dev, m): ",   min_sgh,   max_sgh
+    status = nf_put_var_double(foutid, sghid,  sgh_sd)
     if (status .ne. NF_NOERR) call handle_err(status)
-    print*,"done writing sgh data"
-    
-    print*,"writing sgh30 data",MINVAL(sgh30),MAXVAL(sgh30)
-    status = nf_put_var_double (foutid, sgh30id, sgh30)
+    print *, "done writing sgh data"
+
+    print *, "writing sgh30 data (std dev, m): ", min_sgh30, max_sgh30
+    status = nf_put_var_double(foutid, sgh30id, sgh30_sd)
     if (status .ne. NF_NOERR) call handle_err(status)
-    print*,"done writing sgh30 data"
+    print *, "done writing sgh30 data"
+
+    deallocate(sgh_sd, sgh30_sd)
+    !===============================================================
     
     print*,"writing landm_coslat data",MINVAL(landm_coslat),MAXVAL(landm_coslat)
     status = nf_put_var_double (foutid, landm_coslatid, landm_coslat)
