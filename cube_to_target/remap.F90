@@ -1,4 +1,44 @@
 MODULE remap
+!------------------------------------------------------------------------------
+!  MODULE: remap   (GMAO usage notes)
+!
+!  PURPOSE (what we use from this file)
+!    The GEOS/GMAO topography build uses a subset of this module to:
+!      • compute conservative overlap weights between the cube and target grid
+!      • remap fields (terrain, land fraction, diagnostics) onto the target grid
+!      • handle stretched (Schmidt) targets, including invalid cell fixes
+!
+!  CORE CONCEPTS (already defined below and used as-is)
+!      source grid ('eul')   – equal-area cubed sphere (6 faces, ncube×ncube)
+!      target grid ('lgr')   – destination grid (uniform or stretched)
+!      exchange grid         – intersection of source/target; provides area weights
+!      nreconstruction=1     – piecewise-constant reconstruction on the source
+!
+!  ENTRY POINTS WE CALL
+!      remap_field(...)                  – conservative area-weighted remap to target
+!      remap_field_stretched(...)        – as above, plus robust nearest-neighbor
+!                                          fallback for stretched targets (via KD-tree
+!                                          or block search provided by caller)
+!
+!  WEIGHT CONSTRUCTION (called internally by cube_to_target)
+!      compute_weights_cell(...)         – builds exchange-grid segments and weights
+!      side_integral(...), compute_inner_line_integrals_lat(_nonconvex)
+!                                        – line-integral machinery (Gaussian quad)
+!      collect(...)                      – consolidates segments inside same source cell
+!      glwp(...) / glwp alias            – Gauss–Legendre points/weights
+!
+!  STRETCHED-GRID NOTES
+!      • On uniform targets rrfac=1 and the stretched path is not used.
+!      • On stretched targets, remap_field_stretched keeps the conservative sum
+!        but repairs pathological cells (tiny area, invalid geometry) by copying
+!        from the nearest valid neighbor (KD-tree or block search supplied by caller).
+!
+!  GUARDS
+!      • Index bounds are checked before flattening (ix,iy,ip → ii).
+!      • Negative or zero target area is skipped; pathological final values are
+!        repaired in the stretched remapper (Everest/Dead-Sea checks).
+!------------------------------------------------------------------------------
+  
   INTEGER, PARAMETER ::                           &
        int_kind  = KIND(1),                       &
        real_kind = SELECTED_REAL_KIND(p=14,r=100),&

@@ -2,6 +2,50 @@
 #define DETGDEP
 #undef DEBUGOUTPUT
 module ridge_ana
+!------------------------------------------------------------------------------
+!  MODULE: ridge_ana   (GMAO usage notes)
+!
+!  PURPOSE
+!    Detects and characterizes subgrid-scale orographic ridges on a cubed-sphere
+!    grid for GWD (gravity wave drag) and TRB (turbulent) parameterizations.
+!    Computes anisotropy, crest orientation, ridge height, and subgrid statistics.
+!
+!  WHAT THIS MODULE PROVIDES
+!    1. find_local_maxes()  – identifies local peaks from terrain deviations (terr_dev)
+!    2. find_ridges()        – performs anisotropy and ridge orientation analysis
+!                              around each detected peak using ANISO_ANA.
+!    3. ANISO_ANA / ANISO_ANA_2 – core ridge shape and orientation analysis
+!    4. remapridge2cube()    – paints ridge quantities back to cube-space (6 panels)
+!    5. remapridge2target()  – remaps ridge metrics to target model grid
+!    6. remapridge2tiles()   – aggregates ridges and crests into objects on target grid
+!    7. alloc_ridge_qs()     – allocates arrays for ridge properties and diagnostics
+!
+!  KEY RIDGE METRICS
+!    anglx : ridge orientation angle (°)
+!    aniso : anisotropy (ridge sharpness)
+!    mxdis : ridge amplitude / height
+!    hwdth : ridge half-width (m)
+!    clngt : crest length (m)
+!    riseq / fallq : rise and fall asymmetry
+!    mxvrx / mxvry : ridge variance in x/y
+!
+!  PARALLELIZATION
+!    Ridge analysis (ANISO_ANA) runs with OpenMP parallel loops over peaks.
+!
+!  REGIONAL REFINEMENT SUPPORT
+!    Optional arguments (rr_factor, lregional_refinement) scale window size and
+!    ensure stable analysis across stretched (Schmidt) grids.
+!
+!  OUTPUT STAGES
+!    1. find_ridges() → peak-based ridge statistics
+!    2. remapridge2cube() → fields on cube faces
+!    3. remapridge2target() → fields on model grid
+!    4. remapridge2tiles() → object-level ridge tiles and crest sets
+
+!  NOTE
+!    • PSW = analysis window radius; automatically capped for stretched grids.
+!    • ROTATEBRUSH and DETGDEP compiler flags control ridge “brush” geometry.
+!------------------------------------------------------------------------------
 
 use rotation, only : rotbyx => rotby4
 USE reconstruct
@@ -1517,7 +1561,7 @@ end subroutine THINOUT_LIST
         fallq_target = 0.
         riseq_target = 0.
         aniso_target = 0.
-        anglx_target = -9000.
+        anglx_target = -9999.
         hwdth_target = 0.
         mxvrx_target = 0.
         mxvry_target = 0.
@@ -1525,7 +1569,7 @@ end subroutine THINOUT_LIST
 
      do isubr=1,nsubr
      do i=1,ntarget 
-        if (anglx_target(i,isubr) > -9000. ) &
+        if (anglx_target(i,isubr) > -9999. ) &
         clngt_target(i,isubr) = clngt_target(i,isubr)*length_in_square( anglx_target(i,isubr) )
      end do
      end do
@@ -1559,8 +1603,15 @@ end subroutine THINOUT_LIST
 
        wt = weights_all(counti,1) * wgt(ix,iy,ip)   ! add for stretched grid,  multiply by refinement weight
 
-       isovar_target( i ) = isovar_target( i ) + wt*( (tempC(ii)-terr_dev(ii))**2 )/area_target(i)
+       !isovar_target( i ) = isovar_target( i ) + wt*( (tempC(ii)-terr_dev(ii))**2 )/area_target(i)
+       ! skip NaNs and invalid areas
+       if ( (tempC(ii) == tempC(ii)) .and. (terr_dev(ii) == terr_dev(ii)) .and. &
+            (area_target(i) == area_target(i)) .and. area_target(i) > 0.d0 .and. wt > 0.d0 ) then
+         isovar_target(i) = isovar_target(i) + wt * (tempC(ii)-terr_dev(ii))**2 / area_target(i)
+       end if       
     end do
+    ! zero impossible/undefined totals, then take sqrt
+    where (isovar_target < 0.d0 .or. isovar_target /= isovar_target) isovar_target = 0.d0    
     isovar_target = SQRT( isovar_target )
 
       write(*,*) " remap--target "
@@ -2078,7 +2129,7 @@ end subroutine THINOUT_LIST
      call CubedSphereABPFromRLL(lon22, lat22, a22, b22, ipanel22 , .true. )
 
      do isubr=1,nsubr
-        if ( ANGLX_TARGET(i,isubr) > -9000. ) then
+        if ( ANGLX_TARGET(i,isubr) > -9999. ) then
           a22s = a22 + 0.01*SIN( ANGLX_TARGET(i,isubr)*PI/180. )   
           b22s = b22 + 0.01*COS( ANGLX_TARGET(i,isubr)*PI/180. )
           call CubedSphereRLLFromABP(a22s, b22s , ipanel22, lon22s, lat22s )
@@ -2088,7 +2139,7 @@ end subroutine THINOUT_LIST
           COSLL  = dy2 /sqrt( dx2**2 + dy2**2 )
           ANG22_TARGET(i,isubr) = ACOS( COSLL )*180./PI
         else
-          ANG22_TARGET(i,isubr) = -9000.
+          ANG22_TARGET(i,isubr) = -9999.
         end if   
      end do
   end do

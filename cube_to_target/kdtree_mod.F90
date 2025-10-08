@@ -1,4 +1,44 @@
 module kdtree_mod
+!------------------------------------------------------------------------------
+!  MODULE: kdtree_mod
+!
+!  DESCRIPTION:
+!    Implements a lightweight 2D k-d tree (longitude, latitude) for
+!    efficient nearest-neighbor searches on the sphere.
+!
+!    This module was added by NASA GMAO (2024) as a fast alternative
+!    to block-based neighbor searches used in the NCAR Topo package.
+!    It provides O(log N) average lookup time and supports dynamic
+!    memory allocation for large variable-resolution target grids.
+!
+!  PURPOSE:
+!    Used by cube_to_target.F90 (subroutine overlap_weights) to
+!    find the nearest valid target cell when remapping regions with
+!    missing or zero-area cells. It improves robustness for stretched
+!    (Schmidt) grids and eliminates expensive brute-force searches.
+!
+!  KEY TYPES:
+!      type(kdtree_node) – tree node with coordinates, pointers to left/right children,
+!                          and split dimension (1 = lon, 2 = lat)
+!      type(kdtree)      – container holding the root pointer, point arrays,
+!                          and index/valid metadata
+!
+!  KEY ROUTINES:
+!      build_kdtree(tree, lon, lat, valid) – constructs a k-d tree from valid grid cells
+!      find_nearest_neighbor_kdtree(...)   – returns index of nearest valid neighbor
+!      destroy_kdtree(tree)                – safely frees memory
+!
+!  MORE INFO:
+!      • Uses recursive median splitting (Quickselect) for balanced tree build.
+!      • Searches first down the nearest subtree, backtracks if needed.
+!      • Handles optional exclusion of a cell (e.g., avoid self-matches).
+!      • All arithmetic uses double precision (REAL(8)).
+!
+!  DATE:
+!      Initial GMAO implementation by Amidu Oloso — NASA GMAO ( June 2024 )
+!
+!------------------------------------------------------------------------------
+  
     implicit none
     
     type :: kdtree_node

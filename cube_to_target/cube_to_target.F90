@@ -9,7 +9,38 @@
 !          NASA GMAO Modelling group edits 
 !
 ! ex: ./cube_to_target --help to get list of long and short option names.
-
+!------------------------------------------------------------------------------
+!  GMAO EXTENSION NOTES:
+!    This version (Discover, October 2025) extends the NCAR_Topo_2_0_1 package
+!    to support GEOS production workflows, variable-resolution (Schmidt)
+!    configurations, and CESM-compliant NetCDF output.
+!
+!    Major specific features:
+!      • Command-line driven execution (24 options)
+!      • Dynamic memory management via ensure_capacity()
+!      • Robust KD-tree and block-neighbor search for invalid/zero-area cells
+!      • Laplacian and distance-weighted smoothers (“no-leak” option)
+!      • Optional Schmidt stretching and refinement-factor mapping (rrfac)
+!      • Ridge-finding and sub-grid variance diagnostics (SGH, SGH30)
+!      • Automatic GEOS restart output in wrtncdf_unstructured()
+!
+!  KEY MODULES / SUBROUTINES (quick reference):
+!      overlap_mod::overlap_weights   – Builds overlap/exchange grid and computes
+!                                       spherical-area weights; uses KD-tree fallback.
+!      ensure_capacity                – Dynamically reallocates weight arrays during
+!                                       high-resolution runs.
+!      smooth_intermediate_topo_wrap  – Applies Laplacian or distance-weighted smoothing.
+!      ridge_ana                      – Detects ridges and computes sub-grid-scale
+!                                       gravity-wave drag metrics (SGH, SGH30).
+!      wrtncdf_unstructured / wrtncdf_rll – Writes NCAR/GMAO-compliant NetCDF outputs.
+!      bilinear_interp                – Optional bilinear interpolation of PHIS to
+!                                       GLL grids for dual-grid configurations.
+!
+!  REFERENCE:
+!      Lauritzen et al. (2010) J. Comput. Phys., 229, 586–605
+!      Lauritzen et al. (2015) Geosci. Model Dev., 8, 3975–3986.
+!
+!------------------------------------------------------------------------------
 
 MODULE overlap_mod
   USE shr_kind_mod, ONLY: r8 => shr_kind_r8
@@ -1700,7 +1731,7 @@ program convterr
       allocate( hwdthC( ncube*ncube*6 ), clngtC( ncube*ncube*6 )  )
       allocate( riseqC( ncube*ncube*6 ), fallqC( ncube*ncube*6 )  )
       allocate( mxvrxC( ncube*ncube*6 ), mxvryC( ncube*ncube*6 )  )
-      allocate( nodesC( ncube*ncube*6 ), cwghtC( ncube*ncube*6 ) )
+      allocate( nodesC( ncube*ncube*6 ), cwghtC( ncube*ncube*6 )  )
       allocate( itrgtC( ncube*ncube*6 )  )
   
     !-----------------------------------------------------------------
@@ -1823,13 +1854,13 @@ program convterr
       end if
       CALL wrtncdf_rll(nlon,nlat,lpole,ntarget,terr_target,landfrac_target,sgh_target,sgh30_target,&
            landm_coslat_target,target_center_lon,target_center_lat,output_fname,&
-           lfind_ridges,str_creator, command_line_arguments,area_target,llandfrac)
+           lfind_ridges,str_creator, command_line_arguments,area_target,llandfrac,isovar_target)
       
     ELSE
       CALL wrtncdf_unstructured(ntarget,terr_target,landfrac_target,sgh_target,sgh30_target,&
            landm_coslat_target,target_center_lon,target_center_lat,target_area,&
            output_fname,lfind_ridges, command_line_arguments,&
-           lwrite_rrfac_to_topo_file,rrfac_target,str_creator,area_target,llandfrac)
+           lwrite_rrfac_to_topo_file,rrfac_target,str_creator,area_target,llandfrac,isovar_target)
     END IF
     DEALLOCATE(terr_target,landfrac_target,sgh30_target,sgh_target,landm_coslat_target)
     !---ARH
@@ -2001,7 +2032,7 @@ program convterr
   !+++ARH
   subroutine wrtncdf_unstructured(n,terr,landfrac,sgh,sgh30,landm_coslat,lon,lat,area,&
        output_fname,lfind_ridges,command_line_arguments,&
-       lwrite_rrfac_to_topo_file,rrfac_target,str_creator,area_target,llandfrac)
+       lwrite_rrfac_to_topo_file,rrfac_target,str_creator,area_target,llandfrac,isovar_opt)
     !---ARH
     use shared_vars, only : rad2deg
     use shr_kind_mod, only: r8 => shr_kind_r8
@@ -2025,6 +2056,7 @@ program convterr
     character(len=1024),   intent(in) :: command_line_arguments
     logical,               intent(in) :: lwrite_rrfac_to_topo_file
     real(r8),dimension(n), intent(in) :: rrfac_target
+    real(r8),dimension(n), intent(in), optional :: isovar_opt
     character(len=1024),   intent(in) :: str_creator
     logical,               intent(in) :: llandfrac
     !
@@ -2233,7 +2265,8 @@ program convterr
     ! --- area (solid angle) ---
     status = nf_put_att_double (foutid, areaid, 'missing_value', nf_double, 1, fillvalue)
     status = nf_put_att_double (foutid, areaid, '_FillValue',    nf_double, 1, fillvalue)
-    status = nf_put_att_text   (foutid, areaid, 'long_name', LEN_TRIM('angular area of target grid cell'), 'angular area of target grid cell')
+    status = nf_put_att_text   (foutid, areaid, 'long_name', LEN_TRIM('angular area of target grid cell (solid angle)'), &
+                                                                      'angular area of target grid cell (solid angle)')
     status = nf_put_att_text   (foutid, areaid, 'units',     LEN_TRIM('sr'), 'sr')    
     
     ! --- lat/lon ---
@@ -2270,34 +2303,38 @@ program convterr
     
       ! ANGLL (deg)
       ThisId = ang22id
-      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      !status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      !status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, -9999.0d0)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, -9999.0d0)
       status = nf_put_att_text   (foutid, ThisId, 'long_name', 48, 'Ridge orientation clockwise from true north     ')
       status = nf_put_att_text   (foutid, ThisId, 'units',      7, 'degrees')
       status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
     
       ! ANGLX (deg)
       ThisId = anglxid
-      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
-      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      !status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
+      !status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, -9999.0d0)
+      status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, -9999.0d0)      
       status = nf_put_att_text   (foutid, ThisId, 'long_name', 61, 'Ridge orientation clockwise from b-axis in cubed sphere panel')
       status = nf_put_att_text   (foutid, ThisId, 'units',      7, 'degrees')
       status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
     
-      ! HWDTH (m)
+      ! HWDTH (km)
       ThisId = hwdthid
       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
       status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
       status = nf_put_att_text   (foutid, ThisId, 'long_name', 21, 'Estimated Ridge width')
-      status = nf_put_att_text   (foutid, ThisId, 'units',      1, 'm')
+      status = nf_put_att_text   (foutid, ThisId, 'units',      2, 'km')
       status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
     
-      ! CLNGT (m)
+      ! CLNGT (km)
       ThisId = clngtid
       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
       status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
       status = nf_put_att_text   (foutid, ThisId, 'long_name', 34, 'Estimated Ridge length along crest')
-      status = nf_put_att_text   (foutid, ThisId, 'units',      1, 'm')
+      status = nf_put_att_text   (foutid, ThisId, 'units',      2, 'km')
       status = nf_put_att_text   (foutid, ThisId, 'filter',     4, 'none')
     
       ! ANIXY (dimensionless)
@@ -2329,8 +2366,8 @@ program convterr
       ThisId = gbxarid
       status = nf_put_att_double (foutid, ThisId, 'missing_value', nf_double, 1, fillvalue)
       status = nf_put_att_double (foutid, ThisId, '_FillValue',    nf_double, 1, fillvalue)
-      status = nf_put_att_text   (foutid, ThisId, 'long_name', LEN_TRIM('angular area of target grid cell from scheme'), &
-                                                 'angular area of target grid cell from scheme')
+      status = nf_put_att_text   (foutid, ThisId, 'long_name', LEN_TRIM('angular area of target grid cell (solid angle)'), &
+                                                 'angular area of target grid cell (solid angle)')
       status = nf_put_att_text   (foutid, ThisId, 'units',     LEN_TRIM('sr'), 'sr')
       status = nf_put_att_text   (foutid, ThisId, 'filter',    LEN_TRIM('none'), 'none')
     end if
@@ -2435,6 +2472,16 @@ program convterr
     
     if (status .ne. NF_NOERR) call handle_err(status)
     print*,"done writing lon data"
+
+    ! --- Write ISOVAR if provided ---
+    if (present(isovar_opt) .and. Lfind_ridges) then
+      status = nf_put_var_double (foutid, isovarid, isovar_opt)
+      if (status .ne. NF_NOERR) call handle_err(status)
+    endif
+    if (Lfind_ridges) then
+      where (ang22_target < -180.d0) ang22_target = -9999.d0   ! ANGLL
+      where (anglx_target < -180.d0) anglx_target = -9999.d0   ! ANGLX
+    end if
     
     if (Lfind_ridges) then 
       write(*,*)"bmaa ",__FILE__,__LINE__
@@ -2635,7 +2682,7 @@ program convterr
   !subroutine wrtncdf_rll(nlon,nlat,lpole,n,terr_in,landfrac_in,sgh_in,sgh30_in,landm_coslat_in,lon,lat,&
   !     lprepare_fv_smoothing_routine,output_fname,Lfind_ridges)
   subroutine wrtncdf_rll(nlon,nlat,lpole,n,terr_in,landfrac_in,sgh_in,sgh30_in,landm_coslat_in,lon,lat,&
-       output_fname,Lfind_ridges,str_creator,command_line_arguments,area_target,llandfrac)
+       output_fname,Lfind_ridges,str_creator,command_line_arguments,area_target,llandfrac,isovar_opt)
     !---ARH
     use ridge_ana, only: nsubr, mxdis_target, mxvrx_target, mxvry_target, ang22_target, &
          anglx_target, aniso_target, anixy_target, hwdth_target, wghts_target, & 
@@ -2675,7 +2722,7 @@ program convterr
     integer             :: status    ! return value for error control of netcdf routin
     
     integer             :: mxdisid, ang22id, anixyid, anisoid, mxvrxid, mxvryid, hwdthid, wghtsid, anglxid, gbxarid
-    integer             :: sghufid, terrufid, clngtid, cwghtid, countid,riseqid,fallqid
+    integer             :: sghufid, terrufid, clngtid, cwghtid, countid,riseqid,fallqid, isovarid
     
     !  integer, dimension(2) :: nc_lat_vid,nc_lon_vid
     character (len=8)   :: datestring
@@ -2698,6 +2745,7 @@ program convterr
     integer :: i,j
     real(r8), allocatable :: sgh_sd(:), sgh30_sd(:)
     real(r8) :: min_sgh, max_sgh, min_sgh30, max_sgh30
+    real(r8),dimension(n), intent(in), optional :: isovar_opt  ! fix isovar output
     
     IF (nlon*nlat.NE.n) THEN
       WRITE(*,*) "inconsistent input for wrtncdf_rll"
@@ -2948,12 +2996,105 @@ program convterr
       if (status .ne. NF_NOERR) call handle_err(status)
       status = nf_def_var (foutid,'COUNT', NF_DOUBLE, 3, rdgqdim , countid)
       if (status .ne. NF_NOERR) call handle_err(status)
+
+      ! --- ISOVAR (std dev after ridges, meters) ---
+      status = nf_def_var (foutid, 'ISOVAR', NF_DOUBLE, 2, htopodim, isovarid)
+      if (status .ne. NF_NOERR) then
+        call handle_err(status)
+        write(*,*) "ISOVAR error"
+      end if      
+    status = nf_put_att_double (foutid, isovarid, 'missing_value', nf_double, 1, fillvalue)
+    status = nf_put_att_double (foutid, isovarid, '_FillValue',    nf_double, 1, fillvalue)
+    status = nf_put_att_text   (foutid, isovarid, 'long_name', LEN_TRIM('SQRT(Variance) from topo NOT represented by ridges'), &
+                                                 'SQRT(Variance) from topo NOT represented by ridges')
+    status = nf_put_att_text   (foutid, isovarid, 'units',     LEN_TRIM('m'), 'm')
+    status = nf_put_att_text   (foutid, isovarid, 'filter',    LEN_TRIM('none'), 'none')    
+
+
     endif
+    if (Lfind_ridges) then
+      ! --- MXDIS / RISEQ / FALLQ (meters)
+      status = nf_put_att_double (foutid, mxdisid, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, mxdisid, '_FillValue'   , nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, mxdisid, 'long_name' , 48, 'Obtsacle height diagnosed by ridge-finding alg. ')
+      status = nf_put_att_text   (foutid, mxdisid, 'units'     , 1, 'm')
+      status = nf_put_att_text   (foutid, mxdisid, 'filter'    , 4, 'none')
     
+      status = nf_put_att_double (foutid, riseqid, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, riseqid, '_FillValue'   , nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, riseqid, 'long_name' , 38, 'Rise to peak from left (ridge_finding)')
+      status = nf_put_att_text   (foutid, riseqid, 'units'     , 1, 'm')
+      status = nf_put_att_text   (foutid, riseqid, 'filter'    , 4, 'none')
     
+      status = nf_put_att_double (foutid, fallqid, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, fallqid, '_FillValue'   , nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, fallqid, 'long_name' , 43, 'Fall from peak toward right (ridge_finding)')
+      status = nf_put_att_text   (foutid, fallqid, 'units'     , 1, 'm')
+      status = nf_put_att_text   (foutid, fallqid, 'filter'    , 4, 'none')
     
+      ! --- ANGLL / ANGLX (degrees)
+      status = nf_put_att_double (foutid, ang22id, 'missing_value', nf_double, 1, -9999.d0)
+      status = nf_put_att_double (foutid, ang22id, '_FillValue'   , nf_double, 1, -9999.d0)
+      status = nf_put_att_text   (foutid, ang22id, 'long_name' , 48, 'Ridge orientation clockwise from true north     ')
+      status = nf_put_att_text   (foutid, ang22id, 'units'     , 7, 'degrees')
+      status = nf_put_att_text   (foutid, ang22id, 'filter'    , 4, 'none')
     
+      status = nf_put_att_double (foutid, anglxid, 'missing_value', nf_double, 1, -9999.d0)
+      status = nf_put_att_double (foutid, anglxid, '_FillValue'   , nf_double, 1, -9999.d0)
+      status = nf_put_att_text   (foutid, anglxid, 'long_name' , 61, 'Ridge orientation clockwise from b-axis in cubed sphere panel')
+      status = nf_put_att_text   (foutid, anglxid, 'units'     , 7, 'degrees')
+      status = nf_put_att_text   (foutid, anglxid, 'filter'    , 4, 'none')
     
+      ! --- HWDTH / CLNGT (km)
+      status = nf_put_att_double (foutid, hwdthid, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, hwdthid, '_FillValue'   , nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, hwdthid, 'long_name' , 21, 'Estimated Ridge width')
+      status = nf_put_att_text   (foutid, hwdthid, 'units'     , 2, 'km')
+      status = nf_put_att_text   (foutid, hwdthid, 'filter'    , 4, 'none')
+    
+      status = nf_put_att_double (foutid, clngtid, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, clngtid, '_FillValue'   , nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, clngtid, 'long_name' , 34, 'Estimated Ridge length along crest')
+      status = nf_put_att_text   (foutid, clngtid, 'units'     , 2, 'km')
+      status = nf_put_att_text   (foutid, clngtid, 'filter'    , 4, 'none')
+    
+      ! --- ANISO / ANIXY (dimensionless)
+      status = nf_put_att_double (foutid, anisoid, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, anisoid, '_FillValue'   , nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, anisoid, 'long_name' , 36, 'Variance fraction explained by ridge')
+      status = nf_put_att_text   (foutid, anisoid, 'units'     , 1, '1')
+      status = nf_put_att_text   (foutid, anisoid, 'filter'    , 4, 'none')
+    
+      status = nf_put_att_double (foutid, anixyid, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, anixyid, '_FillValue'   , nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, anixyid, 'long_name' , 42, 'Variance ratio: cross/(cross+length) -wise')
+      status = nf_put_att_text   (foutid, anixyid, 'units'     , 1, '1')
+      status = nf_put_att_text   (foutid, anixyid, 'filter'    , 4, 'none')
+    
+      ! --- WGHTS / CWGHT / COUNT (dimensionless)
+      status = nf_put_att_double (foutid, wghtsid, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, wghtsid, '_FillValue'   , nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, wghtsid, 'long_name' , 27, 'ridge weights across crest')
+      status = nf_put_att_text   (foutid, wghtsid, 'units'     , 1, '1')
+    
+      status = nf_put_att_double (foutid, cwghtid, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, cwghtid, '_FillValue'   , nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, cwghtid, 'long_name' , 25, 'ridge weights along crest')
+      status = nf_put_att_text   (foutid, cwghtid, 'units'     , 1, '1')
+    
+      status = nf_put_att_double (foutid, countid, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, countid, '_FillValue'   , nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, countid, 'long_name' , 33, 'number of contributing samples')
+      status = nf_put_att_text   (foutid, countid, 'units'     , 1, '1')
+    
+      ! --- GBXAR (solid angle, steradian)
+      status = nf_put_att_double (foutid, gbxarid, 'missing_value', nf_double, 1, fillvalue)
+      status = nf_put_att_double (foutid, gbxarid, '_FillValue'   , nf_double, 1, fillvalue)
+      status = nf_put_att_text   (foutid, gbxarid, 'long_name', LEN_TRIM('angular area of target grid cell (solid angle)'), &
+                                                 'angular area of target grid cell (solid angle)')
+      status = nf_put_att_text   (foutid, gbxarid, 'units',     LEN_TRIM('sr'), 'sr')
+      status = nf_put_att_text   (foutid, gbxarid, 'filter',    LEN_TRIM('none'), 'none')
+    end if
     
     !
     ! Create attributes for output variables
@@ -2983,6 +3124,7 @@ program convterr
     status = nf_put_att_double (foutid, landm_coslatid, '_FillValue'   , nf_double, 1, fillvalue)
     status = nf_put_att_text   (foutid, landm_coslatid, 'long_name' , 23, 'smoothed land fraction')
     status = nf_put_att_text   (foutid, landm_coslatid, 'filter'    , 4, 'none')
+
     if (llandfrac) then
       !+++ARH  
       status = nf_put_att_double (foutid, landfracid, 'missing_value', nf_double, 1, fillvalue)
@@ -3103,7 +3245,16 @@ program convterr
     if (status .ne. NF_NOERR) call handle_err(status)
     print*,"done writing lon data"
     
-    
+    ! --- Write ISOVAR if provided ---
+    if (present(isovar_opt) .and. Lfind_ridges) then
+      status = nf_put_var_double (foutid, isovarid, isovar_opt)
+      if (status .ne. NF_NOERR) call handle_err(status)
+    endif
+
+    if (Lfind_ridges) then
+      where (ang22_target < -180.d0) ang22_target = -9999.d0   ! ANGLL
+      where (anglx_target < -180.d0) anglx_target = -9999.d0   ! ANGLX
+    end if    
     if (Lfind_ridges) then 
       
       write(*,*)"bmaa ",__FILE__,__LINE__
@@ -3228,7 +3379,7 @@ program convterr
     !-climo_years    	        |     	Year 1-year N of the climatological averaging period.
     !-data_mods    		|     	Any special substantive (non resolution) modifications that were made to the input data set purely for the purpose of using it in CESM. 
     !
-    str = 'Topo file for NCAR CAM'
+    str = 'Topo file for NCAR CAM and GMAO GCM'
     status = nf_put_att_text (foutid,NF_GLOBAL,'data_summary',LEN(TRIM(str)), TRIM(str))
     if (status .ne. NF_NOERR) call handle_err(status)
 
