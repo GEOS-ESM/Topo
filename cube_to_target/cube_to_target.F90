@@ -97,8 +97,8 @@ CONTAINS
     INTEGER      , ALLOCATABLE,     INTENT(INOUT) :: weights_eul_index_all(:,:) ! (rows , 3)
     INTEGER      , ALLOCATABLE,     INTENT(INOUT) :: weights_lgr_index_all(:)   ! (rows)
 
-    REAL   (r8),                    INTENT(IN)    :: target_corner_lon(ncorner,ntarget)
-    REAL   (r8),                    INTENT(IN)    :: target_corner_lat(ncorner,ntarget)
+    REAL   (r8),                    INTENT(INOUT)    :: target_corner_lon(ncorner,ntarget)
+    REAL   (r8),                    INTENT(INOUT)    :: target_corner_lat(ncorner,ntarget)
     LOGICAL,                        INTENT(IN)    :: ldbg
     type(kdtree),                   INTENT(IN)    :: tree
     LOGICAL,           INTENT(IN)    :: use_block_neighbor_search
