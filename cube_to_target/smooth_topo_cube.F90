@@ -8,6 +8,70 @@
 !      ====       ==========       ===========          =====================
 !
 !-----------------------------------------------------------------------------
+!-----------------------------------------------------------------------------
+!  GMAO NOTES 
+!
+!  WHAT THIS MODULE DOES
+!    • Smooths the intermediate cubed-sphere topography (terr) and returns
+!      1. a smoothed field terr_sm
+!      2. a deviation field terr_dev = terr - terr_sm.
+!    • Supports BOTH:
+!        (A) Distance-weighted smoother
+!        (B) Laplacian “no-leak” smoother on the equiangular cube
+!    • Handles *regional refinement* (Schmidt stretch) via a refinement factor
+!      array rrfac(…,ip), and can optionally smooth rrfac itself for stability.
+!
+!  KEY SUBROUTINES (IN THIS MODULE)
+!    • smooth_intermediate_topo_wrap  – main orchestration for smoothing on the cube
+!    • laplacian                      – metric-aware Laplacian operator on the cube
+!    • smooth_intermediate_topo_halo  – distance-weighted “conical kernel” smoother
+!    • smooth_rrfac_halo              – light 1-2-1 style smoothing of rrfac on halo’d cube
+!    • read_gen_scrip                 – reads DO_SCHMIDT, TARGET_(LON|LAT), STRETCH_FACTOR, ALPHA
+!    • wrtncdf_topo_smooth_data       – optional NetCDF dump of smoothed fields
+!
+!  MODE A — DISTANCE-WEIGHTED SMOOTHER
+!    • Works on halo’d panels (size = ncube + 2*nhalo) with a conical kernel.
+!    • If DO_SCHMIDT (regional refinement) is active, rrfac may be pre-smoothed
+!      (smooth_rrfac_halo), and the kernel footprint contracts ≈ 1/rrfac locally.
+!    • Requires lsmoothing_over_ocean = .TRUE. (enforced here).
+!
+!  MODE B — LAPLACIAN SMOOTHER (NO-LEAK)
+!    • Uses metric terms on the equiangular cube (Nair et al., MWR 2009).
+!    • Time-integration steps = smooth_phis_numcycle; diffusion coeff set by nu_lap.
+!    • Stability (CFL): on stretched grids we scale diffusion by rrfac_sm = (1/rrfac)^2
+!      and reduce the base dt to avoid blow-up
+!      where cells are finest. On **uniform** grids rrfac≡1 and the scheme reduces
+!      to the classic uniform-grid Laplacian loop.
+!
+!  RRFAC / REGIONAL-REFINEMENT
+!    • Uniform grids: rrfac = 1 everywhere (no effect).
+!    • Stretched grids: rrfac>1 in the refined cap; optional lsmooth_rrfac applies
+!      Laplacian smoothing to rrfac for stability/gradual transitions.
+!    • rrfac_max (integer) can cap refinement if passed by the caller.
+!
+!  OCEAN HANDLING
+!    • If lsmoothing_over_ocean = .FALSE., the Laplacian excludes pure ocean cells
+!      using landfrac (distance weighted mode requires ocean smoothing enabled).
+!
+!  VOLUME CONSISTENCY
+!    • After smoothing we rescale terr_sm by (vol_in / vol_out) so the global
+!      integrated volume (and mean PHIS) matches the original.
+!
+!  OUTPUTS
+!    • terr_sm, terr_dev are returned to the caller.
+!    • When lstop_after_smoothing or ldevelopment_diags: writes a compact NetCDF
+!      via wrtncdf_topo_smooth_data (optionally including rr_fac on the target).
+!
+!  PRACTICAL TUNING
+!    • NSCL_c (coarse radius) & NSCL_f (fine prefilter) set the strength/scale.
+!    • nu_lap and smooth_phis_numcycle control Laplacian stability & strength.
+!    • ALPHA (from GenScrip.yaml) scales the stretched-grid Laplacian step to tune GWD.
+!
+!  ISSUES:
+!    • Guardrails abort if the Laplacian diverges (e.g., extreme parameters,
+!      misconfigured smoothing scale, or too few/many iterations).
+!-----------------------------------------------------------------------------
+
 MODULE smooth_topo_cube_sph
   USE reconstruct
   use shr_kind_mod, only: r8 => shr_kind_r8
