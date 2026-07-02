@@ -42,7 +42,7 @@ MODULE remap
   INTEGER, PARAMETER ::                           &
        int_kind  = KIND(1),                       &
        real_kind = SELECTED_REAL_KIND(p=14,r=100),&
-       dbl_kind  = selected_real_kind(13)        
+       dbl_kind  = selected_real_kind(13)
 
   INTEGER :: nc,nhe
 
@@ -56,7 +56,7 @@ MODULE remap
        aa  = 1.0                       ,&
        tiny= 1.0E-9  ,&
        bignum = 1.0E20
-  REAL (KIND=dbl_kind), parameter :: fuzzy_width = 10.0*tiny!1.0E-12  !CAM-SE add           
+  REAL (KIND=dbl_kind), parameter :: fuzzy_width = 10.0*tiny!1.0E-12  !CAM-SE add
 
   contains
 
@@ -68,20 +68,20 @@ MODULE remap
   !*******************************************************************************
   ! Concepts:
   !    source grid ('eul') : Cells on which data (e.g. elevation) is provided.
-  !                          Here this grid is the equal-area cubed sphere with 
+  !                          Here this grid is the equal-area cubed sphere with
   !                          6 panels of ncube x ncube cells
   !
   !    target grid ('lgr') : Cells to which data is mapped from 'eul'. Here
   !                          this will normally be a spectral element grid with
   !                          ntarget cells
   !
-  !    exchange grid       : Cells formed by cutting the source grid and target 
-  !                          grid through each other. The number of cells in this 
+  !    exchange grid       : Cells formed by cutting the source grid and target
+  !                          grid through each other. The number of cells in this
   !                          grid is difficult to know a-priori. Will be determined
   !                          in subroutine overlap_weights
-  !                    
+  !
   !    nreconstruction     : Here set to 1 (a few lines above). Order of subgrid reconstruction
-  !                          function in source grid cells. 1 means assumed piecewise constant 
+  !                          function in source grid cells. 1 means assumed piecewise constant
   !                          in source cells
   !
   !********************************************************************************
@@ -92,12 +92,12 @@ MODULE remap
          nreconstruction,ntarget) result(f)
       use shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
       implicit none
+      integer(i8), intent(in) :: jall
       real(r8), intent(in) :: weights_all(jall,nreconstruction)
       integer , intent(in) :: weights_eul_index_all(jall,3),weights_lgr_index_all(jall)
       integer , intent(in) :: ncube,nreconstruction,ntarget
       real(r8), intent(in) :: field(6*ncube*ncube),area_target(ntarget)
       real(r8):: f(ntarget)
-      integer(i8), intent(in) :: jall
       integer(i8)  :: counti
 
 
@@ -139,8 +139,8 @@ end function remap_field
 !
 ! Purpose:
 !   Remaps data from a cubed-sphere source grid onto a stretched lat/lon target grid
-!   using precomputed overlap weights. This version handles stretched-grid specific 
-!   scenarios, explicitly correcting problematic or invalid cells using nearest-neighbor 
+!   using precomputed overlap weights. This version handles stretched-grid specific
+!   scenarios, explicitly correcting problematic or invalid cells using nearest-neighbor
 !   fallback logic.
 !
 ! Concepts:
@@ -174,22 +174,22 @@ end function remap_field
 !
 ! Notes:
 !   - Designed specifically for robust handling of stretched-grid remapping scenarios.
-!   - Ensures problematic cells (invalid area, unrealistic values) are replaced using 
+!   - Ensures problematic cells (invalid area, unrealistic values) are replaced using
 !     nearest-neighbor logic to preserve physical consistency.
 !
 !===============================================================================
-  
+
   function remap_field_stretched(field, area_target, weights_eul_index_all, weights_lgr_index_all, &
                                  weights_all, ncube, jall, nreconstruction, ntarget, &
                                  target_center_lon, target_center_lat, valid_cells, &
                                  num_lon_blocks, num_lat_blocks, lon_block_size, lat_block_size, blocks, &
                                  tree, use_block_neighbor_search) result(f)
-  
+
     use shr_kind_mod, only: r8 => shr_kind_r8, i8 => shr_kind_i8
     use neighbor_search_mod, ONLY: BlockType, find_nearest_valid_neighbor
     use kdtree_mod
     implicit none
-  
+
     ! Input arguments
     real(r8), intent(in) :: field(6*ncube*ncube)           ! Flattened field over cubed sphere
     real(r8), intent(in) :: area_target(ntarget)           ! Area of each target grid cell
@@ -199,7 +199,7 @@ end function remap_field
     integer, intent(in) :: ncube, nreconstruction, ntarget
     integer(i8), intent(in) :: jall
     integer(i8)  :: counti
-  
+
     real(r8), intent(in) :: target_center_lon(ntarget), target_center_lat(ntarget)
     logical, intent(in) :: valid_cells(ntarget)
     integer, intent(in) :: num_lon_blocks, num_lat_blocks
@@ -207,42 +207,42 @@ end function remap_field
     type(BlockType), intent(in) :: blocks(:,:)
     type(kdtree),  intent(in)    :: tree
     logical, intent(in) :: use_block_neighbor_search
-  
+
     ! Output
     real(r8) :: f(ntarget)
-  
+
     ! Local variables
     integer :: i, ix, iy, ip, ii, closest
     real(r8) :: wt
     real(r8), allocatable :: total_weight(:)
-  
+
     ! Allocate and initialize total_weight
     allocate(total_weight(ntarget))
     f = 0.0_r8
     total_weight = 0.0_r8
-  
+
     ! Loop over each overlap segment and accumulate weighted contributions
     do counti = 1_i8, jall
       i  = weights_lgr_index_all(counti)        ! Target cell index
       ix = weights_eul_index_all(counti,1)      ! Cube x-index
       iy = weights_eul_index_all(counti,2)      ! Cube y-index
       ip = weights_eul_index_all(counti,3)      ! Cube panel index (1–6)
-  
+
       ! Skip invalid indices
       if (i < 1 .or. i > ntarget) cycle
       if (ix < 1 .or. ix > ncube) cycle
       if (iy < 1 .or. iy > ncube) cycle
       if (ip < 1 .or. ip > 6)     cycle
-  
+
       if (area_target(i) <= 0.0_r8) then
         write(*,*) "Warning: cell", i, "has zero or negative area_target:", area_target(i)
         cycle
       endif
-  
+
       ! Convert (ix,iy,ip) triple to flat index
       ii = (ip - 1) * ncube * ncube + (iy - 1) * ncube + ix
       if (ii < 1 .or. ii > 6*ncube*ncube) cycle
-  
+
       ! Compute weight contribution from this overlap segment
       wt = weights_all(counti, 1)
 
@@ -250,12 +250,12 @@ end function remap_field
       f(i) = f(i) + wt * field(ii) / area_target(i)
       total_weight(i) = total_weight(i) + wt
     end do
-  
+
     ! After all cells calculated, fix problematic cells explicitly using nearest neighbor assignment
     do i = 1, ntarget
       if (f(i) > 8848.0_r8 .or. f(i) < -423.0_r8 .or. total_weight(i) <= 0.0_r8) then
         write(*,*) "Problematic final value for cell", i, ":", f(i), "weights sum:", total_weight(i)
-  
+
         ! Robust nearest-neighbor fallback
         if (use_block_neighbor_search) then
            closest = find_nearest_valid_neighbor(i, target_center_lon, target_center_lat, valid_cells, &
@@ -273,9 +273,9 @@ end function remap_field
         endif
       endif
     end do
-  
+
     deallocate(total_weight)
-  
+
   end function remap_field_stretched
 
 !==============================================================================================================
@@ -287,18 +287,18 @@ end function remap_field
       integer , intent(in) :: ncube,jall,ntarget,itarget
       real(r8), intent(in) :: field(6*ncube*ncube)
       ! real(r8):: fsg(6*ncube*ncube)
-      
-      
+
+
       integer :: i,ix,iy,ip,ii
       integer :: ijp3(10000,3),ird
       integer (i8) :: counti
-      
+
       ird=1
       !!fsg=0.0D0
       do counti=1_i8,jall
         i    = weights_lgr_index_all(counti)
 
-        if (itarget == i) then        
+        if (itarget == i) then
            ix  = weights_eul_index_all(counti,1)
            iy  = weights_eul_index_all(counti,2)
            ip  = weights_eul_index_all(counti,3)
@@ -307,7 +307,7 @@ end function remap_field
           ! convert to 1D indexing of cubed-sphere
           !
           ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix
-        
+
           ! cells
           !
           ijp3(ird,1) = ix
@@ -331,16 +331,16 @@ end function select_sg_field
       integer , intent(in) :: ncube,jall,ntarget,itarget
       real(r8), intent(in) :: field(6*ncube*ncube)
       integer :: isg(6*ncube*ncube)
-      
-      integer :: ird 
+
+      integer :: ird
       integer :: i,ix,iy,ip,ii
       integer (i8) :: counti
-      
+
       ird=1
       isg=-1
       do counti=1_i8,jall
         i    = weights_lgr_index_all(counti)
-        
+
            ix  = weights_eul_index_all(counti,1)
            iy  = weights_eul_index_all(counti,2)
            ip  = weights_eul_index_all(counti,3)
@@ -349,7 +349,7 @@ end function select_sg_field
           ! convert to 1D indexing of cubed-sphere
           !
           ii = (ip-1)*ncube*ncube+(iy-1)*ncube+ix
-                
+
           isg(ii) = i
      end do
 
@@ -403,7 +403,7 @@ end function paint_sg_field
          dimension(jmax_segments,nreconstruction), intent(out) :: weights
     integer (kind=int_kind),  &
          dimension(jmax_segments,2), intent(out)      :: weights_eul_index
-    
+
     integer (kind=int_kind) :: jsegment,i,j
     !
     ! variables for registering crossings with Eulerian latitudes and longitudes
@@ -435,11 +435,11 @@ end function paint_sg_field
 !        write(*,*) "x,y,dx,dy: ",i,xcell_in(i),ycell_in(i),xcell_in(i+1)-xcell_in(i),ycell_in(i+1)-ycell_in(i)
         write(*,*) " ",xcell_in(i),ycell_in(i)!,xcell_in(i+1)-xcell_in(i),ycell_in(i+1)-ycell_in(i)
       end do
-      
+
       stop
     endif
-    
-    
+
+
     ldbg_global = ldbg
     ldbgr = ldbg
 
@@ -451,7 +451,7 @@ end function paint_sg_field
 !    else
 !      ldbg_global = .false.
 !    end if
-    
+
     if (ldbg_global) then
       write(*,*) "signed area = ",signed_area
       OPEN(unit=40, file='side_integral.dat',status='replace')
@@ -470,9 +470,9 @@ end function paint_sg_field
         write(*,*) "x,y,dx,dy: ",i,xcell_in(i),ycell_in(i),xcell_in(i+1)-xcell_in(i),ycell_in(i+1)-ycell_in(i)
         write(44,*) "x,y,dx,dy: ",i,xcell_in(i),ycell_in(i),xcell_in(i+1)-xcell_in(i),ycell_in(i+1)-ycell_in(i)
       end do
-      
+
     end if
-    
+
     nc = nc_in
     nhe = nhe_in
 
@@ -493,8 +493,8 @@ end function paint_sg_field
     ! Integrate cell sides
     !
     !**********************
-       
-    
+
+
     IF (jx<-nhe.OR.jx>nc+1+nhe.OR.jy<-nhe.OR.jy>nc+1+nhe) THEN
       WRITE(*,*) "jx,jy,-nhe,nc+1+nhe",jx,jy,-nhe,nc+1+nhe
       STOP
@@ -504,10 +504,10 @@ end function paint_sg_field
          weights,weights_eul_index,nreconstruction,jx,jy,xgno,ygno,jx_min, jx_max, jy_min, jy_max,&
          ngauss,gauss_weights,abscissae,&
          jcross_lat,r_cross_lat,cross_lat_eul_index)
-    
+
     !
     !**********************
-    ! 
+    !
     ! Do inner integrals
     !
     !**********************
@@ -532,7 +532,7 @@ end function paint_sg_field
       ! DBG
       !
       tmp=0.0
-      do i=1,jcollect     
+      do i=1,jcollect
         tmp=tmp+weights(i,1)
       enddo
 
@@ -547,7 +547,7 @@ end function paint_sg_field
           write(*,*) "x,y,dx,dy: ",i,xcell_in(i),ycell_in(i),xcell_in(i+1)-xcell_in(i),ycell_in(i+1)-ycell_in(i)
         end do
         write(*,*) " "
-        do i=1,jcollect     
+        do i=1,jcollect
           write(*,*) "w ",weights_eul_index(i,1),weights_eul_index(i,2),weights(i,1)
           write(*,*) " "
           if (weights(i,1)<-1.0E-11) then
@@ -564,7 +564,7 @@ end function paint_sg_field
             weights(i,1) = 0.0
           end if
         enddo
-        
+
 !        stop
       END IF
     else
@@ -578,7 +578,7 @@ end function paint_sg_field
     end if
   end subroutine compute_weights_cell
 
-  
+
   !
   !****************************************************************************
   !
@@ -638,13 +638,13 @@ end function paint_sg_field
   !
   !*****************************************************************************************
   !
-  ! 
+  !
   !
   !*****************************************************************************************
   !
   subroutine compute_inner_line_integrals_lat(r_cross_lat,cross_lat_eul_index,&
        jcross_lat,jsegment,jmax_segments,xgno,jx_min,jx_max,jy_min, jy_max,weights,weights_eul_index,&
-       nreconstruction,ngauss,gauss_weights,abscissae)!phl add jx_min etc.    
+       nreconstruction,ngauss,gauss_weights,abscissae)!phl add jx_min etc.
     implicit none
     !
     ! variables for registering crossings with Eulerian latitudes and longitudes
@@ -670,11 +670,11 @@ end function paint_sg_field
     integer (kind=int_kind),  &
          dimension(jmax_segments,2), intent(inout) :: weights_eul_index
     real (kind=real_kind)   , dimension(nreconstruction) :: weights_tmp
-    
+
     integer (kind=int_kind) :: imin, imax, i,j,k, h
     real (kind=real_kind), dimension(2)  :: rstart,rend,rend_tmp
     real (kind=real_kind), dimension(2)  :: xseg, yseg
-    
+
     if (jcross_lat>0) then
       do i=MINVAL(cross_lat_eul_index(1:jcross_lat,2)),MAXVAL(cross_lat_eul_index(1:jcross_lat,2))
         !
@@ -713,7 +713,7 @@ end function paint_sg_field
               !                  call get_weights_exact(weights_tmp,xseg,yseg,nreconstruction)
               call get_weights_gauss(weights_tmp,&
                    xseg,yseg,nreconstruction,ngauss,gauss_weights,abscissae)
-              
+
               if (i.LE.jy_max-1.AND.i.GE.jy_min.AND.h.LE.jx_max-1.AND.h.GE.jx_min) then
                 jsegment=jsegment+1
                 if (jsegment>jmax_segments) then
@@ -727,11 +727,11 @@ end function paint_sg_field
                   write(*,*) "ABORTING"
                   stop
                 end if
-                weights_eul_index(jsegment,1) = h 
+                weights_eul_index(jsegment,1) = h
                 weights_eul_index(jsegment,2) = i
                 weights(jsegment,1:nreconstruction) = -weights_tmp
 !                weights(jsegment,1:nreconstruction) = weights_tmp!we are doing integrals counter-clockwise
-                
+
                 if (ldbg_global) then
 !                  if ( h==jx_dbg.and.i==jy_dbg) then
 !                    OPEN(unit=43, file='inner_integral.dat',status='old',POSITION='APPEND')
@@ -741,7 +741,7 @@ end function paint_sg_field
 !                  end if
                 end if
               endif
-              
+
               !
               ! subtract the same weights on the "south" side of the line
               !
@@ -759,7 +759,7 @@ end function paint_sg_field
                   write(*,*) "ABORTING"
                   stop
                 end if
-                weights_eul_index(jsegment,1) = h 
+                weights_eul_index(jsegment,1) = h
                 weights_eul_index(jsegment,2) = i-1
                 weights(jsegment,1:nreconstruction) = weights_tmp
 !                weights(jsegment,1:nreconstruction) = -weights_tmp!we are doing integrals counter-clockwise
@@ -791,7 +791,7 @@ end function paint_sg_field
   subroutine compute_inner_line_integrals_lat_nonconvex(r_cross_lat,cross_lat_eul_index,&
        jcross_lat,jsegment,jmax_segments,xgno,jx_min,jx_max,jy_min, jy_max,weights,weights_eul_index,&
        nreconstruction,ngauss,gauss_weights,abscissae)!phl add jx_min etc.
-    
+
     implicit none
     !
     ! variables for registering crossings with Eulerian latitudes and longitudes
@@ -815,20 +815,20 @@ end function paint_sg_field
          dimension(jmax_segments,nreconstruction), intent(inout) :: weights
     integer (kind=int_kind),  &
          dimension(jmax_segments,2), intent(inout) :: weights_eul_index
-    
+
     integer (kind=int_kind) :: i,k, h
-    
+
     real (kind=real_kind), dimension(jmax_segments,2)  :: r_cross_lat_seg
     integer (kind=int_kind), dimension(jmax_segments,2):: cross_lat_eul_index_seg
-    
+
     real (kind=real_kind), dimension(jmax_segments,2)  :: r_cross_lat_seg2
     integer (kind=int_kind), dimension(jmax_segments,2):: cross_lat_eul_index_seg2
-    
+
     integer (kind=int_kind) :: count,js,is
     real (kind=real_kind) :: a,a2!,b,b2
     integer :: b,b2
-    
-    if (jcross_lat>0) then      
+
+    if (jcross_lat>0) then
       do i=MINVAL(cross_lat_eul_index(1:jcross_lat,2)),MAXVAL(cross_lat_eul_index(1:jcross_lat,2))
         count = 1
         !
@@ -851,8 +851,8 @@ end function paint_sg_field
             do js=2, count
               a =r_cross_lat_seg(js,1)
               a2=r_cross_lat_seg(js,2)
-              b =cross_lat_eul_index_seg(js,1) 
-              b2=cross_lat_eul_index_seg(js,2) 
+              b =cross_lat_eul_index_seg(js,1)
+              b2=cross_lat_eul_index_seg(js,2)
               do is=js-1,1,-1
                 if (r_cross_lat_seg(is,1)<=a) goto 10
                 r_cross_lat_seg(is+1,:)=r_cross_lat_seg(is,:)
@@ -877,26 +877,26 @@ end function paint_sg_field
         do h=1,count-1,2
           r_cross_lat_seg2        (1:2,:) = r_cross_lat_seg        (h:h+1,:)
           cross_lat_eul_index_seg2(1:2,:) = cross_lat_eul_index_seg(h:h+1,:)
-          
+
           call compute_inner_line_integrals_lat(r_cross_lat_seg2,cross_lat_eul_index_seg2,&
                2,jsegment,jmax_segments,xgno,jx_min,jx_max,jy_min, jy_max,weights,weights_eul_index,&
                nreconstruction,ngauss,gauss_weights,abscissae)!phl add jx_min etc.
         end do
-        
+
       enddo
     endif
   end subroutine compute_inner_line_integrals_lat_nonconvex
 
-  
-  
+
+
   !
   ! line integral from (a1_in,a2_in) to (b1_in,b2_in)
   ! If line is coniciding with an Eulerian longitude or latitude the routine
   ! needs to know where an adjacent side is located to determine which
   ! reconstruction must be used. therefore (c1,c2) is passed to the routine
   !
-  !   
-  
+  !
+
   subroutine side_integral(&
        x_in,y_in,nvertex,jsegment,jmax_segments,&
        weights,weights_eul_index,nreconstruction,jx,jy,xgno,ygno,jx_min,jx_max,jy_min,jy_max,&
@@ -910,7 +910,7 @@ end function paint_sg_field
     integer (kind=int_kind),            intent(in)    :: nreconstruction,jx,jy,jmax_segments,ngauss
     real (kind=real_kind), dimension(ngauss), intent(in) :: gauss_weights, abscissae
     real (kind=real_kind), dimension(1:nvertex)        , intent(in)    :: x_in,y_in
-    
+
     integer (kind=int_kind), intent(in)               :: jx_min, jy_min, jx_max, jy_max
     real (kind=real_kind), dimension(-nhe:nc+2+nhe), intent(in) :: xgno
     real (kind=real_kind), dimension(-nhe:nc+2+nhe), intent(in) :: ygno
@@ -934,18 +934,18 @@ end function paint_sg_field
     ! local variables
     !
 !    real (kind=real_kind) :: dist_lon,dist_lat, tmp_a1, tmp_a2, tmp_x(1), tmp_b2
-    real (kind=real_kind), dimension(2) :: xseg,yseg 
+    real (kind=real_kind), dimension(2) :: xseg,yseg
     real (kind=real_kind), dimension(0:3) :: x,y
     real (kind=real_kind)               :: xeul,yeul,xcross,ycross,slope
     integer (kind=int_kind) ::    jx_eul_tmp,jy_eul_tmp
     integer (kind=int_kind)            :: xsgn1,ysgn1,xsgn2,ysgn2
     integer (kind=int_kind) :: iter
     logical :: lcontinue, lsame_cell_x, lsame_cell_y
-    
+
     integer (kind=int_kind) :: jx_eul, jy_eul, side_count,jdbg
     real (kind=real_kind), dimension(0:nvertex+2)  :: xcell,ycell
     real (kind=real_kind), dimension(3)            :: xcell_tmp,ycell_tmp
-    
+
     !
     !***********************************************
     !
@@ -953,7 +953,7 @@ end function paint_sg_field
     !
     !***********************************************
     !
-    jx_eul = jx; jy_eul = jy    
+    jx_eul = jx; jy_eul = jy
     xcell(1:nvertex)=x_in; ycell(1:nvertex)=y_in
     DO iter=1,nvertex
       CALL truncate_vertex(xcell(iter),jx_eul,xgno)
@@ -961,11 +961,11 @@ end function paint_sg_field
     END DO
     xcell(0) = xcell(nvertex); xcell(nvertex+1)=xcell(1); xcell(nvertex+2)=xcell(2);
     ycell(0) = ycell(nvertex); ycell(nvertex+1)=ycell(1); ycell(nvertex+2)=ycell(2);
-    
+
     IF (MAXVAL(xcell).LE.xgno(jx_min).OR.MINVAL(xcell).GE.xgno(jx_max).OR.&
          MAXVAL(ycell).LE.ygno(jy_min).OR.MINVAL(ycell).GE.ygno(jy_max)) THEN
-      
-    ELSE             
+
+    ELSE
       jx_eul = jx
       jy_eul = jy
 
@@ -1003,13 +1003,13 @@ end function paint_sg_field
       end if
       CALL which_eul_cell(xcell_tmp,jx_eul,xgno)
       CALL which_eul_cell(ycell_tmp,jy_eul,ygno)
-     
+
       side_count = 1
       DO WHILE (side_count<nvertex+1)
         jdbg = 0
         iter = 0
         lcontinue = .TRUE.
-        x(0:3) = xcell(side_count-1:side_count+2); y(0:3) = ycell(side_count-1:side_count+2); 
+        x(0:3) = xcell(side_count-1:side_count+2); y(0:3) = ycell(side_count-1:side_count+2);
         DO while (lcontinue)
           iter = iter+1
           IF (iter>1000) THEN
@@ -1036,7 +1036,7 @@ end function paint_sg_field
             !
 !            IF (ldbgr) WRITE(*,*) "same cell integral",jx_eul,jy_eul
             xseg(1) = x(1); yseg(1) = y(1); xseg(2) = x(2); yseg(2) = y(2)
-            jx_eul_tmp = jx_eul; jy_eul_tmp = jy_eul; 
+            jx_eul_tmp = jx_eul; jy_eul_tmp = jy_eul;
             lcontinue = .FALSE.
             !
             ! prepare for next side if (x(2),y(2)) is on a grid line
@@ -1077,7 +1077,7 @@ end function paint_sg_field
               cross_lat_eul_index(jcross_lat,2) = jy_eul
               r_cross_lat(jcross_lat,1) = x(2)
               r_cross_lat(jcross_lat,2) = y(2)
-              
+
               jy_eul=jy_eul-1
             END IF
             lcontinue=.FALSE.
@@ -1115,7 +1115,7 @@ end function paint_sg_field
                 !
                 xcross = MIN(MAX(xcross,xgno(jx_eul)),xgno(jx_eul+1))
 
-                
+
 !                IF (ldbgr) WRITE(*,*) "cross latitude"
                 !
                 ! debugging
@@ -1128,7 +1128,7 @@ end function paint_sg_field
                 END IF
               END IF
               xseg(1) = x(1); yseg(1) = y(1); xseg(2) = xcross; yseg(2) = yeul
-              jx_eul_tmp = jx_eul; jy_eul_tmp = jy_eul; 
+              jx_eul_tmp = jx_eul; jy_eul_tmp = jy_eul;
               !
               ! prepare for next iteration
               !
@@ -1138,7 +1138,7 @@ end function paint_sg_field
               !
               jcross_lat = jcross_lat+1
               cross_lat_eul_index(jcross_lat,1) = jx_eul
-              if (ysgn2>0) then                
+              if (ysgn2>0) then
                 cross_lat_eul_index(jcross_lat,2) = jy_eul
 !                IF (ldbgr) WRITE(*,*) "cross latitude",jy_eul
 !              IF (ldbgr) WRITE(*,*) "jcross_lat",jcross_lat
@@ -1173,7 +1173,7 @@ end function paint_sg_field
               ! constrain crossing to be "physically" possible
               !
               ycross = MIN(MAX(ycross,ygno(jy_eul)),ygno(jy_eul+1))
-              
+
               !
               ! debugging
               !
@@ -1185,7 +1185,7 @@ end function paint_sg_field
                 STOP
               END IF
               xseg(1) = x(1); yseg(1) = y(1); xseg(2) = xeul; yseg(2) = ycross
-              jx_eul_tmp = jx_eul; jy_eul_tmp = jy_eul; 
+              jx_eul_tmp = jx_eul; jy_eul_tmp = jy_eul;
               !
               ! prepare for next iteration
               !
@@ -1198,14 +1198,14 @@ end function paint_sg_field
               ! there are crossings with longitude(s) and latitude(s)
               !
               !*******************************************************************************
-              ! 
+              !
               xsgn1 = (1+INT(SIGN(1.0D0,x(2)-x(1))))/2 !"1" if x(2)>x(1) else "0"
               xsgn2 = (INT(SIGN(1.0D0,x(2)-x(1)))) !"1" if x(2)>x(1) else "0"
-              xeul   = xgno(jx_eul+xsgn1) 
+              xeul   = xgno(jx_eul+xsgn1)
               ysgn1 = (1+INT(SIGN(1.0D0,y(2)-y(1))))/2 !"1" if y(2)>y(1) else "0"
               ysgn2 = INT(SIGN(1.0D0,y(2)-y(1)))       !"1" if y(2)>y(1) else "-1"
               yeul   = ygno(jy_eul+ysgn1)
-              
+
               slope  = (y(2)-y(1))/(x(2)-x(1))
               IF (ABS(x(2)-x(1))<fuzzy_width) THEN
                 ycross = 0.5*(y(2)-y(1))
@@ -1213,14 +1213,14 @@ end function paint_sg_field
                 ycross = y_cross_eul_lon(x(1),y(1),xeul,slope)
               END IF
               xcross = x_cross_eul_lat(x(1),y(1),yeul,slope)
-              
+
               IF ((xsgn2>0.AND.xcross.LE.xeul).OR.(xsgn2<0.AND.xcross.GE.xeul)) THEN
                 !
                 ! cross latitude
                 !
 !                IF (ldbgr) WRITE(*,*) "crossing latitude",jy_eul+ysgn1
                 xseg(1) = x(1); yseg(1) = y(1); xseg(2) = xcross; yseg(2) = yeul
-                jx_eul_tmp = jx_eul; jy_eul_tmp = jy_eul; 
+                jx_eul_tmp = jx_eul; jy_eul_tmp = jy_eul;
                 !
                 ! prepare for next iteration
                 !
@@ -1230,7 +1230,7 @@ end function paint_sg_field
                 !
                 jcross_lat = jcross_lat+1
                 cross_lat_eul_index(jcross_lat,1) = jx_eul
-                if (ysgn2>0) then                
+                if (ysgn2>0) then
                   cross_lat_eul_index(jcross_lat,2) = jy_eul
 !                  IF (ldbgr) WRITE(*,*) "cross latitude",jy_eul
                 else
@@ -1245,13 +1245,13 @@ end function paint_sg_field
                 !
 !                IF (ldbgr) WRITE(*,*) "crossing longitude",jx_eul+xsgn1
                 xseg(1) = x(1); yseg(1) = y(1); xseg(2) = xeul; yseg(2) = ycross
-                jx_eul_tmp = jx_eul; jy_eul_tmp = jy_eul; 
+                jx_eul_tmp = jx_eul; jy_eul_tmp = jy_eul;
                 !
                 ! prepare for next iteration
                 !
                 x(0) = x(1); y(0) = y(1); x(1) = xeul; y(1) = ycross; jx_eul = jx_eul+xsgn2
               END IF
-              
+
             END IF
           END IF
           !
@@ -1265,7 +1265,7 @@ end function paint_sg_field
             weights_eul_index(jsegment,2) = jy_eul_tmp
             call get_weights_gauss(weights(jsegment,1:nreconstruction),&
                  xseg,yseg,nreconstruction,ngauss,gauss_weights,abscissae)
-            
+
             if (ldbg_global) then
 !              if ( jx_eul_tmp==jx_dbg.and.jy_eul_tmp==jy_dbg) then
                 !              WRITE(40,*) xseg(1),yseg(1)," # in ",jx_eul_tmp,jy_eul_tmp
@@ -1274,8 +1274,8 @@ end function paint_sg_field
                 WRITE(40,*) "  "
 !              end if
             end if
-            
-            
+
+
             jdbg=jdbg+1
 
             if (xseg(1).EQ.xseg(2))then
@@ -1287,13 +1287,13 @@ end function paint_sg_field
             end if
           ELSE
 !            IF (ldbgr) WRITE(*,*) "segment outside of panel"
-          END IF         
+          END IF
         END DO
         side_count = side_count+1
       END DO
     END IF
   end subroutine side_integral
- 
+
 
   real (kind=real_kind) function compute_slope(x,y)
     implicit none
@@ -1311,7 +1311,7 @@ end function paint_sg_field
     real (kind=real_kind)              , intent(in) :: xeul,slope
     ! line: y=a*x+b
     real (kind=real_kind) :: b
-    b = y-slope*x 
+    b = y-slope*x
     y_cross_eul_lon = slope*xeul+b
   end function y_cross_eul_lon
 
@@ -1399,8 +1399,8 @@ end function paint_sg_field
         weights(6) = ((I_11(xseg(2),yseg(2))-I_11(xseg(1),yseg(1))))
       endif
     else
-      
-      
+
+
       slope    = (yseg(2)-yseg(1))/(xseg(2)-xseg(1))
       b        = yseg(1)-slope*xseg(1)
       dx2      = 0.5D0*(xseg(2)-xseg(1))
@@ -1412,7 +1412,7 @@ end function paint_sg_field
         y        = slope*x+b
         integral = integral+gauss_weights(i)*F_00(x,y)
       enddo
-      weights(1) = integral*dx2  
+      weights(1) = integral*dx2
       if (nreconstruction>1) then
         integral = 0.0D0
         do i=1,ngauss
@@ -1420,14 +1420,14 @@ end function paint_sg_field
           y        = slope*x+b
           integral = integral+gauss_weights(i)*F_10(x,y)
         enddo
-        weights(2) = integral*dx2  
+        weights(2) = integral*dx2
         integral = 0.0D0
         do i=1,ngauss
           x        = xc+abscissae(i)*dx2
           y        = slope*x+b
           integral = integral+gauss_weights(i)*F_01(x,y)
         enddo
-        weights(3) = integral*dx2  
+        weights(3) = integral*dx2
       endif
       if (nreconstruction>3) then
         integral = 0.0D0
@@ -1436,21 +1436,21 @@ end function paint_sg_field
           y        = slope*x+b
           integral = integral+gauss_weights(i)*F_20(x,y)
         enddo
-        weights(4) = integral*dx2  
+        weights(4) = integral*dx2
         integral = 0.0D0
         do i=1,ngauss
           x        = xc+abscissae(i)*dx2
           y        = slope*x+b
           integral = integral+gauss_weights(i)*F_02(x,y)
         enddo
-        weights(5) = integral*dx2  
+        weights(5) = integral*dx2
         integral = 0.0D0
         do i=1,ngauss
           x        = xc+abscissae(i)*dx2
           y        = slope*x+b
           integral = integral+gauss_weights(i)*F_11(x,y)
         enddo
-        weights(6) = integral*dx2  
+        weights(6) = integral*dx2
       endif
     end if
   end subroutine get_weights_gauss
@@ -1510,7 +1510,7 @@ end function paint_sg_field
     alpha = ATAN(x)
     tmp=y*COS(alpha)
     F_02 =-y/SQRT(1.0D0+x*x+y*y)+log(tmp+sqrt(tmp*tmp+1))
-    
+
     !
     ! cos(alpha) = 1/sqrt(1+x*x)
     !
@@ -1533,7 +1533,7 @@ end function paint_sg_field
     real (kind=real_kind), dimension(3)                    , intent(in)    :: x
     real (kind=real_kind), dimension(-nhe:nc+2+nhe), intent(in)    :: gno !phl
 !    real (kind=real_kind), intent(in)    :: eps
-    
+
     logical                 :: lcontinue
     integer :: iter
 
@@ -1546,12 +1546,12 @@ end function paint_sg_field
 !    RETURN
 
 !    j_eul = MIN(MAX(j_eul,-nhe),nc+1+nhe) !added
-    
+
     lcontinue = .TRUE.
-    iter = 0 
+    iter = 0
 !    IF (ldbgr) WRITE(*,*) "from which_eul_cell",x(1),x(2),x(3)
     DO WHILE (lcontinue)
-      iter = iter+1 
+      iter = iter+1
       IF (x(1).GE.gno(j_eul).AND.x(1).LT.gno(j_eul+1)) THEN
         lcontinue = .FALSE.
         !
@@ -1567,7 +1567,7 @@ end function paint_sg_field
           ELSE
 !            IF (ldbgr) WRITE(*,*) "x(2) is on top of gno(J_eul)"
             !
-            ! x(2) is on gno(j_eul) grid line; need x(3) to determine Eulerian cell 
+            ! x(2) is on gno(j_eul) grid line; need x(3) to determine Eulerian cell
             !
             IF (x(3).GT.gno(j_eul)) THEN
 !              IF (ldbgr) WRITE(*,*) "x(3) to the right"
@@ -1583,7 +1583,7 @@ end function paint_sg_field
           END IF
         END IF
       ELSE
-        ! 
+        !
         ! searching - prepare for next iteration
         !
         IF (x(1).GE.gno(j_eul+1)) THEN
@@ -1611,11 +1611,11 @@ end function paint_sg_field
     real (kind=real_kind)                    , intent(inout)    :: x
     real (kind=real_kind), dimension(-nhe:nc+2+nhe), intent(in)    :: gno !phl
 !    real (kind=real_kind), intent(in)    :: eps
-    
+
     logical                 :: lcontinue
     integer :: iter, xsgn
     real (kind=real_kind) :: dist,dist_new,tmp
-    
+
     !
     !  this is not needed in transport code search
     !
@@ -1626,12 +1626,12 @@ end function paint_sg_field
 
 
     lcontinue = .TRUE.
-    iter = 0 
+    iter = 0
     dist = bignum
 !    j_eul = MIN(MAX(j_eul,-nhe),nc+1+nhe) !added
     xsgn     = INT(SIGN(1.0_dbl_kind,x-gno(j_eul)))
     DO WHILE (lcontinue)
-      iter     = iter+1 
+      iter     = iter+1
       tmp      = x-gno(j_eul)
       dist_new = ABS(tmp)
       IF (dist_new>dist) THEN
@@ -1666,7 +1666,7 @@ subroutine gauss_points(n,weights,points)
   implicit none
   integer (kind=int_kind)           , intent(in ) :: n
   real (kind=real_kind), dimension(n), intent(out) :: weights, points
-  
+
   select case (n)
 !    CASE(1)
 !       abscissae(1) = 0.0D0
@@ -1689,9 +1689,9 @@ subroutine gauss_points(n,weights,points)
      points(3)    =  0.339981043584856264802665659103D0
      points(4)    =  0.861136311594052575223946488893D0
      weights(1)   =  0.347854845137453857373063949222D0
-     weights(2)   =  0.652145154862546142626936050778D0 
-     weights(3)   =  0.652145154862546142626936050778D0 
-     weights(4)   =  0.347854845137453857373063949222D0      
+     weights(2)   =  0.652145154862546142626936050778D0
+     weights(3)   =  0.652145154862546142626936050778D0
+     weights(4)   =  0.347854845137453857373063949222D0
   case(5)
      points(1)    = -(1.0D0/3.0D0)*sqrt(5.0D0+2.0D0*sqrt(10.0D0/7.0D0))
      points(2)    = -(1.0D0/3.0D0)*sqrt(5.0D0-2.0D0*sqrt(10.0D0/7.0D0))
@@ -1731,12 +1731,12 @@ end subroutine gauss_points
       signum = 0.0D0
     ENDIF
   end function
-  
+
 !------------------------------------------------------------------------------
 ! FUNCTION SIGNUM_FUZZY
 !
 ! Description:
-!   Gives the sign of the given real number, returning zero if x is within 
+!   Gives the sign of the given real number, returning zero if x is within
 !     a small amount from zero.
 !------------------------------------------------------------------------------
   function signum_fuzzy(x)
